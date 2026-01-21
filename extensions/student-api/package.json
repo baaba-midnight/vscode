@@ -1,0 +1,36 @@
+{
+    "name": "student-api",
+    "displayName": "Student API Client",
+    "description": "Provides API client for student features",
+    "version": "1.0.0",
+    "publisher": "vscode",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/baaba-midnight/student-ide.git"
+    },
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.106.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "*"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": []
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.106.0",
+        "@types/node": "18.x",
+        "typescript": "^5.3.3",
+        "node-fetch": "^3.3.2"
+    }
+}
