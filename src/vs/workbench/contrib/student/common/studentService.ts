@@ -24,7 +24,7 @@ export interface IStudentProgress {
 	lastActivity: Date;
 }
 
-export interface IStudentTask {
+export interface IStudentAssignment {
 	id: string;
 	title: string;
 	description: string;
@@ -48,17 +48,19 @@ export interface IStudentService {
 
 	// Events
 	readonly onProgressUpdate: Event<IStudentProgress>;
-	readonly onTasksUpdate: Event<IStudentTask[]>;
+	readonly onAssignmentsUpdate: Event<IStudentAssignment[]>;
 	readonly onChatMessage: Event<IChatMessage>;
 
 	// Progress methods
 	getProgress(): Promise<IStudentProgress>;
 	updateProgress(data: Partial<IStudentProgress>): Promise<void>;
 
-	// Task methods
-	getTasks(): Promise<IStudentTask[]>;
-	completeTask(taskId: string): Promise<void>;
-	getTaskById(taskId: string): Promise<IStudentTask | undefined>;
+	// Assignment methods
+	getAssignments(): Promise<IStudentAssignment[]>;
+	completeAssignment(assignmentId: string): Promise<void>;
+	getAssignmentById(assignmentId: string): Promise<IStudentAssignment | undefined>;
+	submitAssignment(assignmentId: string): Promise<void>;
+	submitReflection(assignmentId: string, confidence: number, difficulty: string, text?: string): Promise<void>;
 
 	// Chat methods
 	sendChatMessage(message: string): Promise<IChatMessage>;
@@ -77,8 +79,8 @@ export class StudentService extends Disposable implements IStudentService {
 	private readonly _onProgressUpdate = this._register(new Emitter<IStudentProgress>());
 	readonly onProgressUpdate: Event<IStudentProgress> = this._onProgressUpdate.event;
 
-	private readonly _onTasksUpdate = this._register(new Emitter<IStudentTask[]>());
-	readonly onTasksUpdate: Event<IStudentTask[]> = this._onTasksUpdate.event;
+	private readonly _onAssignmentsUpdate = this._register(new Emitter<IStudentAssignment[]>());
+	readonly onAssignmentsUpdate: Event<IStudentAssignment[]> = this._onAssignmentsUpdate.event;
 
 	private readonly _onChatMessage = this._register(new Emitter<IChatMessage>());
 	readonly onChatMessage: Event<IChatMessage> = this._onChatMessage.event;
@@ -95,7 +97,7 @@ export class StudentService extends Disposable implements IStudentService {
 		completedExercises: 0,
 		lastActivity: new Date(0),
 	};
-	private _currentTasks: IStudentTask[] = [];
+	private _currentAssignments: IStudentAssignment[] = [];
 	private _chatHistory: IChatMessage[] = [];
 
 	constructor(
@@ -118,13 +120,13 @@ export class StudentService extends Disposable implements IStudentService {
 			// ensure we have a valid API client with authentication
 			await this.ensureApiClient();
 
-			const [progress, tasks] = await Promise.all([
+			const [progress, assignments] = await Promise.all([
 				this._fetchProgressSafe(),
-				this._fetchTasksSafe()
+				this._fetchAssignmentsSafe()
 			]);
 
 			this._currentProgress = progress;
-			this._currentTasks = tasks;
+			this._currentAssignments = assignments;
 		} catch (error) {
 			console.error('Failed to initialize StudentService:', error);
 			return;
@@ -153,12 +155,13 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 	}
 
-	private async _fetchTasksSafe(): Promise<IStudentTask[]> {
+	private async _fetchAssignmentsSafe(): Promise<IStudentAssignment[]> {
 		try {
-			const response = await this._apiClient.get<IStudentTask[]>('/student/tasks');
-			return response.data;
+			const response = await this._apiClient.get<IStudentAssignment[]>('/student/assignments');
+			const data = Array.isArray(response.data) ? response.data : [];
+			return data;
 		} catch (error) {
-			console.error('Failed to fetch student tasks:', error);
+			console.error('Failed to fetch student assignments:', error);
 			return [];
 		}
 	}
@@ -187,27 +190,28 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 	}
 
-	async getTasks(): Promise<IStudentTask[]> {
+	async getAssignments(): Promise<IStudentAssignment[]> {
 		await this._ensureInitialized();
 		try {
-			const response = await this._apiClient.get<IStudentTask[]>('/student/tasks');
-			this._currentTasks = response.data;
-			return this._currentTasks;
+			const response = await this._apiClient.get<IStudentAssignment[]>('/student/assignments');
+			const data = Array.isArray(response.data) ? response.data : [];
+			this._currentAssignments = data;
+			return this._currentAssignments;
 		} catch (error) {
-			console.error('Failed to fetch student tasks:', error);
-			return this._currentTasks;
+			console.error('Failed to fetch student assignments:', error);
+			return this._currentAssignments;
 		}
 	}
 
-	async completeTask(taskId: string): Promise<void> {
+	async completeAssignment(assignmentId: string): Promise<void> {
 		await this._ensureInitialized();
 		try {
-			await this._apiClient.post(`/student/tasks/${taskId}/complete`, {});
+			await this._apiClient.post(`/student/assignments/${assignmentId}/complete`, {});
 
-			const taskIndex = this._currentTasks.findIndex(task => task.id === taskId);
-			if (taskIndex !== -1) {
-				this._currentTasks[taskIndex].completed = true;
-				this._onTasksUpdate.fire(this._currentTasks);
+			const assignmentIndex = this._currentAssignments.findIndex(assignment => assignment.id === assignmentId);
+			if (assignmentIndex !== -1) {
+				this._currentAssignments[assignmentIndex].completed = true;
+				this._onAssignmentsUpdate.fire(this._currentAssignments);
 			}
 
 			await this.getProgress();
@@ -218,9 +222,41 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 	}
 
-	async getTaskById(taskId: string): Promise<IStudentTask | undefined> {
+	async getAssignmentById(assignmentId: string): Promise<IStudentAssignment | undefined> {
 		await this._ensureInitialized();
-		return this._currentTasks.find(task => task.id === taskId);
+		return this._currentAssignments.find(assignment => assignment.id === assignmentId);
+	}
+
+	async submitAssignment(assignmentId: string): Promise<void> {
+		await this._ensureInitialized();
+		try {
+			const payload = {
+				student_id: this._studentId ?? '',
+				assignment_id: assignmentId,
+				submitted_at: new Date().toISOString()
+			};
+			await this._apiClient.post<void>('/student/assignments/submit-assignment', payload);
+		} catch (error) {
+			console.error('Failed to submit assignment:', error);
+			throw error;
+		}
+	}
+
+	async submitReflection(assignmentId: string, confidence: number, difficulty: string, text?: string): Promise<void> {
+		await this._ensureInitialized();
+		try {
+			const payload = {
+				student_id: this._studentId ?? '',
+				assignment_id: assignmentId,
+				confidence,
+				difficulty,
+				reflection: text ?? null
+			};
+			await this._apiClient.post<void>('/student/reflections', payload);
+		} catch (error) {
+			console.error('Failed to submit reflection:', error);
+			throw error;
+		}
 	}
 
 	async sendChatMessage(message: string): Promise<IChatMessage> {
@@ -290,11 +326,11 @@ export class StudentService extends Disposable implements IStudentService {
 
 			await Promise.all([
 				this.getProgress(),
-				this.getTasks()
+				this.getAssignments()
 			]);
 
 			this._onProgressUpdate.fire(this._currentProgress);
-			this._onTasksUpdate.fire([...this._currentTasks]);
+			this._onAssignmentsUpdate.fire([...this._currentAssignments]);
 
 			this._chatHistory = [];
 		} catch (error) {

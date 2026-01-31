@@ -28,6 +28,7 @@ export class StudentChatPanel extends ViewPane {
 	private _messageInput!: HTMLTextAreaElement;
 	private _sendButton!: HTMLButtonElement;
 	private _clearButton!: HTMLButtonElement;
+	private _loadingElement: HTMLElement | undefined;
 
 	private readonly _onMessageSent = this._register(new Emitter<string>());
 	readonly onMessageSent: Event<string> = this._onMessageSent.event;
@@ -65,7 +66,7 @@ export class StudentChatPanel extends ViewPane {
 			themeService,
 			hoverService
 		);
-		this._register(this.studentService.onChatMessage(message => this._addMessage(message)));
+		this._register(this.studentService.onChatMessage(message => this._handleIncomingMessage(message)));
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -132,6 +133,7 @@ export class StudentChatPanel extends ViewPane {
 		this._messageInput.value = '';
 		this._sendButton.disabled = true;
 		this._sendButton.textContent = 'Sending...';
+		this._showLoadingIndicator();
 
 		try {
 			await this.studentService.sendChatMessage(message);
@@ -139,11 +141,19 @@ export class StudentChatPanel extends ViewPane {
 		} catch (error) {
 			console.error('Error sending message:', error);
 		} finally {
+			this._hideLoadingIndicator();
 			// re-enable send button
 			this._sendButton.disabled = false;
 			this._sendButton.textContent = 'Send';
 			this._messageInput.focus();
 		}
+	}
+
+	private _handleIncomingMessage(message: IChatMessage): void {
+		if (!message.isUser) {
+			this._hideLoadingIndicator();
+		}
+		this._addMessage(message);
 	}
 
 	private _addMessage(message: IChatMessage): void {
@@ -207,6 +217,35 @@ export class StudentChatPanel extends ViewPane {
 
 	private _scrollToBottom(): void {
 		this._messagesContainer.scrollTop = this._messagesContainer.scrollHeight;
+	}
+
+	private _showLoadingIndicator(): void {
+		if (this._loadingElement) {
+			return;
+		}
+
+		this._loadingElement = append(this._messagesContainer, $('.chat-loading'));
+		const headerElement = append(this._loadingElement, $('.message-header'));
+		const senderElement = append(headerElement, $('.message-sender'));
+		senderElement.textContent = 'AI Assistant';
+
+		const timestampElement = append(headerElement, $('.message-timestamp'));
+		timestampElement.textContent = '...';
+
+		const contentElement = append(this._loadingElement, $('.message-content'));
+		contentElement.textContent = 'AI is thinking...';
+
+		this._scrollToBottom();
+	}
+
+	private _hideLoadingIndicator(): void {
+		if (!this._loadingElement || !this._loadingElement.parentElement) {
+			this._loadingElement = undefined;
+			return;
+		}
+
+		this._loadingElement.parentElement.removeChild(this._loadingElement);
+		this._loadingElement = undefined;
 	}
 
 	private _adjustInputHeight(): void {

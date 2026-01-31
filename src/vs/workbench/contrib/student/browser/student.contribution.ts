@@ -9,6 +9,7 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { IViewsRegistry, Extensions as ViewExtensions, IViewContainersRegistry, Extensions as ViewContainerExtensions, ViewContainerLocation } from '../../../common/views.js';
 import { StudentChatPanel } from './studentChatPanel.js';
+import { StudentAssignmentPanel } from './studentAssignmentPanel.js';
 import { IStudentService, StudentService } from '../common/studentService.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
@@ -32,17 +33,29 @@ const VIEW_CONTAINER = Registry.as<IViewContainersRegistry>(ViewContainerExtensi
 
 console.log('[Student] View container registered');
 
-// Register Chat Panel View
-Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([{
-	id: 'workbench.view.student.chat',
-	name: localize2('studentChat', 'AI Chat'),
-	containerIcon: ThemeIcon.fromId('comment-discussion'),
-	ctorDescriptor: new SyncDescriptor(StudentChatPanel),
-	canToggleVisibility: true,
-	canMoveView: true,
-	weight: 100,
-	order: 1,
-	when: undefined
-}], VIEW_CONTAINER);
+// Register Student views (Assignment + Chat) in the Student container
+Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
+	{
+		id: 'workbench.view.student.assignments',
+		name: localize2('studentAssignments', 'Assignment'),
+		ctorDescriptor: new SyncDescriptor(StudentAssignmentPanel),
+		canToggleVisibility: true,
+		canMoveView: true,
+		weight: 100,
+		order: 0,
+		when: undefined
+	},
+	{
+		id: 'workbench.view.student.chat',
+		name: localize2('studentChat', 'AI Chat'),
+		containerIcon: ThemeIcon.fromId('comment-discussion'),
+		ctorDescriptor: new SyncDescriptor(StudentChatPanel),
+		canToggleVisibility: true,
+		canMoveView: true,
+		weight: 90,
+		order: 1,
+		when: undefined
+	}
+], VIEW_CONTAINER);
 
-console.log('[Student] Chat view registered successfully');
+console.log('[Student] Student views registered successfully');

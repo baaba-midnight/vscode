@@ -127,3 +127,197 @@
 	font-style: italic;
 	padding: 20px;
 }
+
+.chat-loading {
+	margin-bottom: 8px;
+	padding: 6px 10px;
+	border-radius: 6px;
+	background: var(--vscode-textCodeBlock-background);
+	border-left: 3px dashed var(--vscode-focusBorder);
+	opacity: 0.8;
+}
+
+/* Student Task / Assignment Panel */
+.student-task-panel {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	padding: 8px;
+	overflow-y: auto;
+}
+
+.current-task-container {
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 4px;
+	padding: 8px 10px;
+	margin-bottom: 8px;
+	background: var(--vscode-editor-background);
+}
+
+.current-task-empty {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}
+
+.current-task-header {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-bottom: 6px;
+}
+
+.current-task-title {
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.current-task-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.current-task-badge.difficulty {
+	padding: 2px 6px;
+	border-radius: 3px;
+	background: var(--vscode-editorInfo-background);
+	color: var(--vscode-editorInfo-foreground);
+	text-transform: capitalize;
+}
+
+.current-task-topic {
+	font-style: italic;
+}
+
+.current-task-time,
+.current-task-due {
+	opacity: 0.8;
+}
+
+.current-task-body {
+	margin-top: 4px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.tasks-list-container {
+	overflow-y: auto;
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 4px;
+	padding: 6px 0;
+	background: var(--vscode-editor-background);
+}
+
+.tasks-empty {
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+	padding: 12px;
+}
+
+.tasks-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.task-item {
+	padding: 6px 10px;
+	cursor: pointer;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.task-item:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.task-item-active {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.task-item-completed {
+	opacity: 0.7;
+	text-decoration: line-through;
+}
+
+.task-item-title {
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.task-item-meta {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	display: flex;
+	gap: 6px;
+}
+
+.task-item-difficulty {
+	text-transform: capitalize;
+}
+
+/* Reflection form below assignment list */
+.reflection-container {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--vscode-panel-border);
+	font-size: 12px;
+}
+
+.reflection-header {
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.reflection-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 6px;
+}
+
+.reflection-label {
+	color: var(--vscode-foreground);
+}
+
+.reflection-select {
+	min-width: 60px;
+	padding: 2px 6px;
+	border-radius: 3px;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+}
+
+.reflection-textarea {
+	width: 100%;
+	min-height: 50px;
+	margin-bottom: 6px;
+	padding: 4px 6px;
+	border-radius: 3px;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	resize: vertical;
+}
+
+.reflection-submit-button {
+	padding: 4px 10px;
+	border-radius: 3px;
+	border: 1px solid var(--vscode-button-border);
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.reflection-submit-button:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
+}

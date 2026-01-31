@@ -85,7 +85,8 @@ export class ApiClient {
 	}
 
 	async adapt(payload: AdaptRequest): Promise<IApiResponse<AdaptResponse>> {
-		const response = await this.makeRequest<AdaptResponse>('POST', '/adapt', payload);
+		const response = await this.makeRequest<AdaptResponse>('POST', '/student/adapt', payload);
+
 		const normalizedData =
 			response.data && (response.data as { data?: unknown }).data
 				? (response.data as { data: unknown }).data
