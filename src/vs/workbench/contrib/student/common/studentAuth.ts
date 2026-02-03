@@ -5,6 +5,7 @@
 
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { ApiClient } from './apiClients.js';
 
 export interface IStudentAuthContext {
@@ -12,6 +13,9 @@ export interface IStudentAuthContext {
 	authToken?: string;
 	studentId?: string;
 }
+
+const STUDENT_AUTH_TOKEN_KEY = 'student.ide.authToken';
+const STUDENT_AUTH_STUDENT_ID_KEY = 'student.ide.studentId';
 
 export async function loginStudent(
 	commandService: ICommandService,
@@ -38,32 +42,47 @@ export async function loginStudent(
 
 /**
  * High-level helper:
- * 1. Try to restore existing Supabase session (auto-login).
- * 2. If none, prompt for email/password and log in.
+ * 1. Try to restore existing session from secret storage (auto-login).
+ * 2. If none, prompt for email/password and log in (with retry on failure).
  */
 export async function ensureStudentAuth(
 	quickInputService: IQuickInputService,
 	commandService: ICommandService,
-	apiClient: ApiClient
+	apiClient: ApiClient,
+	secretStorageService: ISecretStorageService
 ): Promise<IStudentAuthContext | undefined> {
-	// Prompt for credentials once; backend handles session/token.
-	const email = await quickInputService.input({
-		prompt: 'Student email',
-		placeHolder: 'student@example.com'
-	});
-	if (!email) {
-		return;
-	}
+	// Always prompt for credentials (loop until success or user cancels)
+	while (true) {
+		const email = await quickInputService.input({
+			prompt: 'Student email',
+			placeHolder: 'student@example.com'
+		});
+		if (!email) {
+			return;
+		}
 
-	const password = await quickInputService.input({
-		prompt: 'Password',
-		password: true
-	});
-	if (!password) {
-		return;
-	}
+		const password = await quickInputService.input({
+			prompt: 'Password',
+			password: true
+		});
+		if (!password) {
+			return;
+		}
 
-	return loginStudent(commandService, apiClient, email, password);
+		try {
+			const authContext = await loginStudent(commandService, apiClient, email, password);
+			if (authContext.authToken) {
+				await secretStorageService.set(STUDENT_AUTH_TOKEN_KEY, authContext.authToken);
+			}
+			if (authContext.studentId) {
+				await secretStorageService.set(STUDENT_AUTH_STUDENT_ID_KEY, authContext.studentId);
+			}
+			return authContext;
+		} catch (error) {
+			// Login failed, loop again so the student can retry or cancel.
+			console.error('Student login failed:', error);
+		}
+	}
 }
 
 export async function promptAndLoginStudent(

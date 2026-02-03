@@ -19,6 +19,11 @@ import { IStudentService, IStudentAssignment } from '../common/studentService.js
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { renderMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
+import { URI } from '../../../../base/common/uri.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { joinPath } from '../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 
 export class StudentAssignmentPanel extends ViewPane {
 	private _containerElement!: HTMLElement;
@@ -40,6 +45,8 @@ export class StudentAssignmentPanel extends ViewPane {
 		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IThemeService themeService: IThemeService,
+		@IFileService private readonly fileService: IFileService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IStudentService private readonly studentService: IStudentService,
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
@@ -61,6 +68,7 @@ export class StudentAssignmentPanel extends ViewPane {
 		this._register(this.studentService.onAssignmentsUpdate(assignments => {
 			this._assignments = assignments;
 			this._updateCurrentTask();
+			this._renderCurrentTask();
 			this._renderTasksList();
 		}));
 	}
@@ -96,15 +104,23 @@ export class StudentAssignmentPanel extends ViewPane {
 	private _updateCurrentTask(): void {
 		if (!Array.isArray(this._assignments) || this._assignments.length === 0) {
 			this._currentAssignment = undefined;
+			this.studentService.setCurrentAssignment(undefined);
 			this._renderCurrentTask();
 			this._onAssignmentSelected.fire(undefined);
 			this._renderReflectionForm();
 			return;
 		}
 
-		// Prefer the first incomplete assignment as the "current" one, fallback to first.
-		const incomplete = this._assignments.find(assignment => !assignment.completed);
-		this._currentAssignment = incomplete ?? this._assignments[0];
+		// Preserve the currently selected assignment if it still exists;
+		// otherwise fall back to the first assignment.
+		if (this._currentAssignment) {
+			const existing = this._assignments.find(a => a.assignment_id === this._currentAssignment!.assignment_id);
+			this._currentAssignment = existing ?? this._assignments[0];
+		} else {
+			this._currentAssignment = this._assignments[0];
+		}
+		this.studentService.setCurrentAssignment(this._currentAssignment.assignment_id);
+		void this._loadAssignmentDetails(this._currentAssignment.assignment_id);
 		this._renderCurrentTask();
 		this._onAssignmentSelected.fire(this._currentAssignment);
 		this._renderReflectionForm();
@@ -123,21 +139,18 @@ export class StudentAssignmentPanel extends ViewPane {
 		const title = append(header, $('.current-task-title'));
 		title.textContent = this._currentAssignment.title;
 
+		const actions = append(header, $('.current-task-actions'));
+		const startButton = append(actions, $('button.current-task-start-button')) as HTMLButtonElement;
+		startButton.textContent = 'Start Assignment';
+		this._register(addDisposableListener(startButton, 'click', () => {
+			void this._startAssignment();
+		}));
+
 		const meta = append(header, $('.current-task-meta'));
-		const difficulty = append(meta, $('.current-task-badge difficulty'));
-		difficulty.textContent = this._currentAssignment.difficulty;
 
-		const topic = append(meta, $('.current-task-topic'));
-		topic.textContent = this._currentAssignment.topic;
-
-		if (this._currentAssignment.estimatedTime) {
-			const time = append(meta, $('.current-task-time'));
-			time.textContent = `${this._currentAssignment.estimatedTime} min`;
-		}
-
-		if (this._currentAssignment.dueDate) {
+		if (this._currentAssignment.due_date) {
 			const due = append(meta, $('.current-task-due'));
-			const date = this._currentAssignment.dueDate instanceof Date ? this._currentAssignment.dueDate : new Date(this._currentAssignment.dueDate);
+			const date = new Date(this._currentAssignment.due_date);
 			due.textContent = `Due ${date.toLocaleString()}`;
 		}
 
@@ -149,7 +162,78 @@ export class StudentAssignmentPanel extends ViewPane {
 		md.supportThemeIcons = true;
 		md.supportHtml = false;
 		const rendered = renderMarkdown(md, { codeBlockRenderer: undefined });
+		this._register(rendered);
 		append(body, rendered.element);
+
+		if (this._currentAssignment.files && this._currentAssignment.files.length) {
+			const filesHeader = append(body, $('.current-task-files-header'));
+			filesHeader.textContent = 'Files';
+
+			const filesList = append(body, $('.current-task-files-list'));
+			for (const file of this._currentAssignment.files) {
+				const fileItem = append(filesList, $('.current-task-file-item'));
+				const displayName = file.filename ?? file.file_name ?? 'File';
+				const url = file.url ?? file.file_path;
+				fileItem.textContent = displayName;
+				fileItem.title = url ?? '';
+				if (url) {
+					this._register(addDisposableListener(fileItem, 'click', () => {
+						this.openerService.open(URI.parse(url));
+					}));
+				}
+			}
+		}
+	}
+
+	private _sanitizeFolderName(name: string): string {
+		const sanitized = name.replace(/[\\/:*?"<>|]/g, '_').trim();
+		return sanitized || 'assignment';
+	}
+
+	private async _startAssignment(): Promise<void> {
+		if (!this._currentAssignment || !this._currentAssignment.files || !this._currentAssignment.files.length) {
+			this.notificationService.warn('This assignment has no attached files to download.');
+			return;
+		}
+
+		const folderResult = await this.fileDialogService.showOpenDialog({
+			canSelectFiles: false,
+			canSelectFolders: true,
+			canSelectMany: false,
+			title: 'Select Folder for Assignment Files',
+			openLabel: 'Select Folder'
+		});
+		if (!folderResult || !folderResult.length) {
+			return;
+		}
+
+		const baseFolder = folderResult[0];
+		const folderName = this._sanitizeFolderName(this._currentAssignment.title || 'assignment');
+		const assignmentFolder = joinPath(baseFolder, folderName);
+		await this.fileService.createFolder(assignmentFolder);
+
+		for (const file of this._currentAssignment.files) {
+			const url = file.url ?? file.file_path;
+			if (!url) {
+				continue;
+			}
+
+			const fileName = file.filename ?? file.file_name ?? 'file';
+			try {
+				const response = await fetch(url);
+				if (!response.ok) {
+					continue;
+				}
+				const arrayBuffer = await response.arrayBuffer();
+				const buffer = VSBuffer.wrap(new Uint8Array(arrayBuffer));
+				const target = joinPath(assignmentFolder, fileName);
+				await this.fileService.writeFile(target, buffer);
+			} catch (error) {
+				console.error('Failed to download assignment file', error);
+			}
+		}
+
+		this.notificationService.info('Assignment files downloaded to the selected folder.');
 	}
 
 	private _renderTasksList(): void {
@@ -161,35 +245,56 @@ export class StudentAssignmentPanel extends ViewPane {
 			return;
 		}
 
+		const header = append(this._tasksListContainer, $('.tasks-header'));
+		header.textContent = this._assignments.length > 1
+			? `Assignments (${this._assignments.length}) - click to switch`
+			: 'Assignments';
+
 		const list = append(this._tasksListContainer, $('.tasks-list'));
 		for (const assignment of this._assignments) {
 			const item = append(list, $('.task-item', {
 				'tabindex': '0',
-				'data-task-id': assignment.id
+				'data-task-id': assignment.assignment_id
 			}));
 
-			if (this._currentAssignment && this._currentAssignment.id === assignment.id) {
+			if (this._currentAssignment && this._currentAssignment.assignment_id === assignment.assignment_id) {
 				item.classList.add('task-item-active');
 			}
 
-			if (assignment.completed) {
-				item.classList.add('task-item-completed');
-			}
 
-			const title = append(item, $('.task-item-title'));
-			title.textContent = assignment.title;
-
-			const meta = append(item, $('.task-item-meta'));
-			const difficulty = append(meta, $('.task-item-difficulty'));
-			difficulty.textContent = assignment.difficulty;
 
 			item.onclick = () => {
 				this._currentAssignment = assignment;
 				this._renderCurrentTask();
 				this._renderTasksList();
 				this._onAssignmentSelected.fire(assignment);
+				this.studentService.setCurrentAssignment(assignment.assignment_id);
 				this._renderReflectionForm();
+				void this._loadAssignmentDetails(assignment.assignment_id);
 			};
+		}
+	}
+
+	private async _loadAssignmentDetails(assignmentId: string): Promise<void> {
+		try {
+			const detailed = await this.studentService.getAssignmentById(assignmentId);
+			if (!detailed) {
+				return;
+			}
+
+			const index = this._assignments.findIndex(a => a.assignment_id === detailed.assignment_id);
+			if (index !== -1) {
+				this._assignments[index] = detailed;
+			}
+
+			if (this._currentAssignment && this._currentAssignment.assignment_id === detailed.assignment_id) {
+				this._currentAssignment = detailed;
+				this._renderCurrentTask();
+				this._renderTasksList();
+				this._renderReflectionForm();
+			}
+		} catch (error) {
+			console.error('Failed to load assignment details:', error);
 		}
 	}
 
@@ -257,7 +362,7 @@ export class StudentAssignmentPanel extends ViewPane {
 		submitButton.textContent = 'Submitting...';
 
 		try {
-			await this.studentService.submitReflection(this._currentAssignment.id, confidence, difficulty, text || undefined);
+			await this.studentService.submitReflection(this._currentAssignment.assignment_id, confidence, difficulty, text || undefined);
 			this.notificationService.info('Reflection submitted successfully.');
 			textArea.value = '';
 		} catch (error) {
@@ -279,7 +384,20 @@ export class StudentAssignmentPanel extends ViewPane {
 		submitButton.textContent = 'Submitting...';
 
 		try {
-			await this.studentService.submitAssignment(this._currentAssignment.id);
+			const selection = await this.fileDialogService.showOpenDialog({
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: true,
+				title: 'Select Assignment Files to Submit',
+				openLabel: 'Submit'
+			});
+
+			if (!selection || !selection.length) {
+				return;
+			}
+
+			const fileUris = selection.map(uri => uri.toString());
+			await this.studentService.submitAssignment(this._currentAssignment.assignment_id, fileUris);
 			this.notificationService.info('Assignment submitted successfully.');
 		} catch (error) {
 			console.error('Failed to submit assignment:', error);

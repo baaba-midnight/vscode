@@ -3,6 +3,47 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+export interface ApiResponse<T> {
+	data: T;
+	message?: string;
+	error?: string;
+}
+
+export interface AssignmentFile {
+	id: string;
+	// New backend shape
+	filename?: string;
+	url?: string;
+	// Legacy/optional fields kept for compatibility
+	assignment_id?: string;
+	file_name?: string;
+	file_path?: string;
+	mime_type?: string;
+	uploaded_at?: string;
+}
+
+export interface Assignment {
+	assignment_id: string;
+	title: string;
+	description: string;
+	due_date: string;
+	// created_by?: string;
+	// created_at?: string;
+	// total_points?: number;
+	// ai_help_policy?: string;
+	// updated_at?: string;
+	// files?: AssignmentFile[];
+}
+
+export interface AssignmentDetails extends Assignment {
+	created_by?: string;
+	created_at?: string;
+	total_points?: number;
+	ai_help_policy?: string;
+	updated_at?: string;
+	files?: AssignmentFile[];
+}
+
 export interface StudentState {
 	accuracy?: number; // float
 	struggles?: number; // integer
@@ -14,15 +55,14 @@ export interface TrackerMetrics {
 	accuracy: number;
 	hint_count: number;
 	struggles: number;
-	tasks_completed: number;
 	time_spent: number;
-	confidence: number | null;
-	current_difficulty: string | null;
+	confidence?: string | null;
+	current_difficulty?: number | null;
 }
 
 export interface AdaptResponse {
-	adaptive_prompt?: string;
-	ai_response?: string;
+	adaptive_prompt: string;
+	ai_response: string;
 	student_state?: StudentState;
 	tracker_metrics?: TrackerMetrics;
 }
@@ -32,6 +72,7 @@ export interface AdaptRequest {
 	student_query: string;
 	reflection?: string | null;
 	task_result?: string | null;
+	assignment_id?: string | null;
 }
 
 export interface ChatMessageCreate {
