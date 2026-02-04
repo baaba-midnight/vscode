@@ -88,8 +88,8 @@ export class ApiClient {
 		const response = await this.makeRequest<AdaptResponse>('POST', '/student/adapt', payload);
 
 		const normalizedData =
-			response.data && (response.data as { data?: unknown }).data
-				? (response.data as { data: unknown }).data
+			response.data && (response.data as { data?: AdaptResponse }).data
+				? response
 				: response.data;
 
 		return {

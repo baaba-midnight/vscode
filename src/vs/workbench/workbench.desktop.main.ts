@@ -185,8 +185,11 @@ import './contrib/mcp/electron-browser/mcp.contribution.js';
 // Policy Export
 import './contrib/policyExport/electron-browser/policyExport.contribution.js';
 
-// Student Integration
+// Student Integration - AI CHAT
 import './contrib/student/browser/student.contribution.js';
+
+// Student Integration - Assignments
+import './contrib/studentAssignments/browser/studentAssignments.contribution.js';
 
 //#endregion
 
