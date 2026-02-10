@@ -11,6 +11,29 @@
 	padding: 8px;
 }
 
+.chat-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 6px;
+}
+
+.chat-assignment-label {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.chat-assignment-select {
+	flex: 1;
+	max-width: 100%;
+	padding: 2px 6px;
+	font-size: 11px;
+	border-radius: 3px;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+}
+
 .chat-messages {
 	flex: 1;
 	overflow-y: auto;

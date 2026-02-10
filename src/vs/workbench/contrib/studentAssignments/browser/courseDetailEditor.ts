@@ -25,6 +25,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { URI } from '../../../../base/common/uri.js';
 import { hasStoredStudentAuth } from '../../student/common/studentAuth.js';
 import { localize } from '../../../../nls.js';
+import { IStudentService } from '../../student/common/studentService.js';
 
 /**
  * Editor that displays course details and assignment cards
@@ -45,6 +46,7 @@ export class CourseDetailEditor extends EditorPane {
 		@IThemeService themeService: IThemeService,
 		@IStorageService storageService: IStorageService,
 		@IStudentAssignmentsService private readonly assignmentsService: IStudentAssignmentsService,
+		@IStudentService private readonly studentService: IStudentService,
 		@IEditorService private readonly editorService: IEditorService,
 		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 		@ICommandService private readonly commandService: ICommandService,
@@ -508,6 +510,8 @@ export class CourseDetailEditor extends EditorPane {
 	private async startAssignment(assignment: IAssignment): Promise<void> {
 		// Start assignment - download files
 		await this.assignmentsService.startAssignment(assignment.id);
+		// Let the shared student service know which assignment is active for AI chat
+		this.studentService.setCurrentAssignment(assignment.id);
 		// Immediately open the assignment folder so the student sees the files
 		await this.assignmentsService.openAssignmentFolder(assignment.id);
 		// Refresh view (status / buttons may have changed)
@@ -516,6 +520,8 @@ export class CourseDetailEditor extends EditorPane {
 	}
 
 	private openAssignmentFiles(assignment: IAssignment): void {
+		// When continuing an assignment, ensure AI chat is scoped to it
+		this.studentService.setCurrentAssignment(assignment.id);
 		// Open assignment folder in explorer
 		this.assignmentsService.openAssignmentFolder(assignment.id);
 	}

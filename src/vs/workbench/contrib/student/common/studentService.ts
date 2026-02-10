@@ -37,6 +37,7 @@ export interface IStudentService {
 	submitAssignment(assignmentId: string, fileUris: string[]): Promise<void>;
 	submitReflection(assignmentId: string, confidence: number, difficulty: string, text?: string): Promise<void>;
 	setCurrentAssignment(assignmentId: string | undefined): void;
+	getCurrentAssignment(): string | undefined;
 
 	// Chat methods
 	sendChatMessage(message: string): Promise<IChatMessage>;
@@ -208,6 +209,10 @@ export class StudentService extends Disposable implements IStudentService {
 
 	setCurrentAssignment(assignmentId: string | undefined): void {
 		this._currentAssignmentId = assignmentId;
+	}
+
+	getCurrentAssignment(): string | undefined {
+		return this._currentAssignmentId;
 	}
 
 	async sendChatMessage(message: string): Promise<IChatMessage> {

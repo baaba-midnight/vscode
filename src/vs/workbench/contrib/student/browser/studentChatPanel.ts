@@ -17,7 +17,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
-import { IStudentService, IChatMessage } from '../common/studentService.js';
+import { IStudentService, IChatMessage, IStudentAssignment } from '../common/studentService.js';
 import { renderMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -33,6 +33,9 @@ export class StudentChatPanel extends ViewPane {
 	private _sendButton!: HTMLButtonElement;
 	private _clearButton!: HTMLButtonElement;
 	private _loadingElement: HTMLElement | undefined;
+	private _assignmentHeader!: HTMLElement;
+	private _assignmentSelect!: HTMLSelectElement;
+	private _assignments: IStudentAssignment[] = [];
 
 	private readonly _onMessageSent = this._register(new Emitter<string>());
 	readonly onMessageSent: Event<string> = this._onMessageSent.event;
@@ -83,6 +86,17 @@ export class StudentChatPanel extends ViewPane {
 	}
 
 	private _createLayout(): void {
+		// Assignment selector header
+		this._assignmentHeader = append(this._chatContainer, $('.chat-header'));
+		const label = append(this._assignmentHeader, $('.chat-assignment-label'));
+		label.textContent = localize('studentChatAssignmentLabel', "Assignment:");
+		this._assignmentSelect = append(this._assignmentHeader, $('select.chat-assignment-select')) as HTMLSelectElement;
+		this._assignmentSelect.appendChild(new Option(localize('studentChatAssignmentNone', "None"), ''));
+		this._assignmentSelect.addEventListener('change', () => {
+			const value = this._assignmentSelect.value;
+			this.studentService.setCurrentAssignment(value || undefined);
+		});
+
 		// Messages container with scroll
 		this._messagesContainer = append(this._chatContainer, $('.chat-messages'));
 
@@ -113,7 +127,28 @@ export class StudentChatPanel extends ViewPane {
 		}
 
 		this._createLayout();
+		await this._loadAssignmentsForSelector();
 		await this._loadChatHistory();
+	}
+
+	private async _loadAssignmentsForSelector(): Promise<void> {
+		try {
+			this._assignments = await this.studentService.getAssignments();
+			// Clear existing options except the first ("None")
+			while (this._assignmentSelect.options.length > 1) {
+				this._assignmentSelect.remove(1);
+			}
+			for (const assignment of this._assignments) {
+				const option = new Option(assignment.title, assignment.assignment_id);
+				this._assignmentSelect.appendChild(option);
+			}
+			const current = this.studentService.getCurrentAssignment();
+			if (current) {
+				this._assignmentSelect.value = current;
+			}
+		} catch (error) {
+			console.error('Failed to load assignments for chat selector:', error);
+		}
 	}
 
 	private _setupEventListeners(): void {
@@ -240,6 +275,7 @@ export class StudentChatPanel extends ViewPane {
 					this._chatContainer.removeChild(this._chatContainer.firstChild);
 				}
 				this._createLayout();
+				await this._loadAssignmentsForSelector();
 				await this._loadChatHistory();
 			}
 		}));
