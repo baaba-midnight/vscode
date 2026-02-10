@@ -21,6 +21,21 @@ TREE VIEW STYLES (Sidebar)
 	background-color: var(--vscode-list-hoverBackground);
 }
 
+.course-tree-item.selected {
+	background-color: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.course-tree-item.selected .course-title,
+.course-tree-item.selected .course-description {
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.course-tree-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
 .category-tree-item {
 	font-weight: 600;
 	font-size: 11px;
@@ -70,12 +85,14 @@ COURSE DETAIL EDITOR
 .course-header {
 	border-bottom: 1px solid var(--vscode-panel-border);
 	margin-bottom: 32px;
+	background-color: var(--vscode-sideBar-background);
 }
 
 .header-content {
 	max-width: 1200px;
 	margin: 0 auto;
-	padding: 32px 24px;
+	padding: 24px 24px 28px;
+	border-radius: 8px;
 }
 
 .course-banner {
@@ -92,11 +109,11 @@ COURSE DETAIL EDITOR
 	margin-bottom: 24px;
 }
 
-.course-title {
+.course-header-title {
 	font-size: 28px;
 	font-weight: 600;
 	color: var(--vscode-foreground);
-	margin: 0 0 12px 0;
+	padding: 15px 0 15px 0;
 }
 
 .course-meta {
@@ -114,7 +131,7 @@ COURSE DETAIL EDITOR
 	gap: 6px;
 }
 
-.course-description {
+.course-header-description {
 	font-size: 14px;
 	line-height: 1.6;
 	color: var(--vscode-foreground);
@@ -378,6 +395,116 @@ EMPTY STATE
 }
 
 /* ===========================
+FOCUSED ASSIGNMENT + SUBMISSION DETAIL
+=========================== */
+
+.assignment-focus {
+	background: var(--vscode-sideBar-background);
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 8px;
+	padding: 20px 20px 16px;
+	margin-bottom: 24px;
+}
+
+.assignment-focus-header {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.assignment-focus-header .title-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.assignment-focus .assignment-title {
+	font-size: 18px;
+	font-weight: 600;
+	margin: 0;
+}
+
+.assignment-focus .card-meta {
+	padding: 4px 0 0;
+	border-top: none;
+}
+
+.assignment-focus .assignment-description {
+	padding: 8px 0 0;
+	-webkit-line-clamp: unset;
+	overflow: visible;
+}
+
+.assignment-focus-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.submission-section {
+	background: var(--vscode-sideBar-background);
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 8px;
+	padding: 20px;
+}
+
+.submission-section .section-header {
+	margin-bottom: 16px;
+}
+
+.submission-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	margin-bottom: 12px;
+}
+
+.submission-feedback {
+	margin-top: 8px;
+	font-size: 13px;
+	color: var(--vscode-foreground);
+	line-height: 1.5;
+	white-space: pre-line;
+}
+
+.submission-section h3 {
+	margin: 16px 0 8px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.submission-files {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.submission-files li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 6px 10px;
+	border-radius: 4px;
+	background: var(--vscode-editorWidget-background);
+}
+
+.submission-files .filename {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.submission-files .mime-type {
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* ===========================
 RESPONSIVE
 =========================== */
 
@@ -389,5 +516,14 @@ RESPONSIVE
 	.course-meta {
 		flex-direction: column;
 		gap: 8px;
+	}
+
+	.assignment-focus {
+		padding: 16px;
+	}
+
+	.submission-files li {
+		flex-direction: column;
+		align-items: flex-start;
 	}
 }

@@ -18,6 +18,13 @@ import { IEditorGroup } from '../../../services/editor/common/editorGroupsServic
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorOpenContext } from '../../../common/editor.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IOpenerService } from '../../../../platform/opener/common/opener.js';
+import { URI } from '../../../../base/common/uri.js';
+import { hasStoredStudentAuth } from '../../student/common/studentAuth.js';
+import { localize } from '../../../../nls.js';
 
 /**
  * Editor that displays course details and assignment cards
@@ -30,6 +37,7 @@ export class CourseDetailEditor extends EditorPane {
 	private headerContainer!: HTMLElement;
 	private assignmentsContainer!: HTMLElement;
 	private assignmentsGrid: HTMLElement | undefined;
+	private submissionContainer: HTMLElement | undefined;
 
 	constructor(
 		group: IEditorGroup,
@@ -38,6 +46,10 @@ export class CourseDetailEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@IStudentAssignmentsService private readonly assignmentsService: IStudentAssignmentsService,
 		@IEditorService private readonly editorService: IEditorService,
+		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@IOpenerService private readonly openerService: IOpenerService,
 		// @IInstantiationService private readonly instantiationService: IInstantiationService
 	) {
 		super(CourseDetailEditor.ID, group, telemetryService, themeService, storageService);
@@ -58,19 +70,31 @@ export class CourseDetailEditor extends EditorPane {
 
 		await super.setInput(input, options, context, token);
 
+		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
+		if (!isAuthed) {
+			this.renderSignInPrompt();
+			return;
+		}
+
 		let course: ICourse | undefined;
 		let assignments: IAssignment[] = [];
+		let focusedAssignment: IAssignment | undefined;
+		let showSubmission = false;
 
-		const asCourseInput = input as CourseDetailInput;
-		const asAssignmentInput = input as AssignmentDetailInput;
-		if (asCourseInput.course) {
-			course = asCourseInput.course;
+		if (input instanceof CourseDetailInput && input.course) {
+			course = input.course;
 			assignments = await this.assignmentsService.getAssignmentsByCourse(course.id);
-		} else if (asAssignmentInput.assignment) {
-			const assignment = asAssignmentInput.assignment;
-			course = await this.assignmentsService.getCourse(assignment.courseId);
+		} else if (input instanceof AssignmentDetailInput && input.assignment) {
+			const assignmentFromInput = input.assignment;
+			// Ensure we have the full assignment payload (including files) from getAssignment
+			const fullAssignment = await this.assignmentsService.getAssignment(assignmentFromInput.id) || assignmentFromInput;
+			course = await this.assignmentsService.getCourse(fullAssignment.courseId);
 			if (course) {
 				assignments = await this.assignmentsService.getAssignmentsByCourse(course.id);
+			}
+			focusedAssignment = fullAssignment;
+			if (input.view === 'submission') {
+				showSubmission = true;
 			}
 		}
 
@@ -79,7 +103,83 @@ export class CourseDetailEditor extends EditorPane {
 		}
 
 		this.renderCourseHeader(course);
-		this.renderAssignments(assignments);
+		clearNode(this.assignmentsContainer);
+		if (focusedAssignment) {
+			this.renderFocusedAssignmentHeader(course, focusedAssignment);
+			if (showSubmission) {
+				await this.renderSubmissionDetails(focusedAssignment);
+			} else {
+				this.renderAssignmentFiles(focusedAssignment);
+			}
+		} else {
+			this.renderAssignments(assignments);
+		}
+	}
+
+	private renderFocusedAssignmentHeader(course: ICourse, assignment: IAssignment): void {
+		const container = append(this.assignmentsContainer, $('.assignment-focus'));
+
+		const header = append(container, $('.assignment-focus-header'));
+
+		const titleRow = append(header, $('.title-row'));
+		const title = append(titleRow, $('h2.assignment-title'));
+		title.textContent = assignment.title;
+
+		const statusBadge = append(titleRow, $('.status-badge'));
+		statusBadge.textContent = this.getStatusLabel(assignment.status);
+		statusBadge.classList.add(`status-${assignment.status}`);
+
+		const meta = append(header, $('.card-meta'));
+		const dueDate = append(meta, $('.meta-item'));
+		dueDate.textContent = `Due: ${this.formatDate(assignment.dueDate)}`;
+
+		const points = append(meta, $('.meta-item'));
+		points.textContent = `${assignment.points} points`;
+
+		const type = append(meta, $('.meta-item'));
+		type.textContent = `Type: ${assignment.type}`;
+
+		if (assignment.description) {
+			const description = append(container, $('.assignment-description'));
+			description.textContent = assignment.description;
+		}
+
+		const actions = append(container, $('.assignment-focus-actions'));
+
+		const openFolderBtn = append(actions, $('button.btn-secondary'));
+		openFolderBtn.textContent = 'Open Assignment Folder';
+		addDisposableListener(openFolderBtn, EventType.CLICK, e => {
+			e.stopPropagation();
+			this.openAssignmentFiles(assignment);
+		});
+
+		const backBtn = append(actions, $('button.btn-primary'));
+		backBtn.textContent = 'Back to Assignments';
+		addDisposableListener(backBtn, EventType.CLICK, e => {
+			e.stopPropagation();
+			const input = new CourseDetailInput(course);
+			this.editorService.openEditor(input);
+		});
+	}
+
+	private renderSignInPrompt(): void {
+		clearNode(this.container);
+		const wrapper = append(this.container, $('.student-auth-required'));
+		const message = append(wrapper, $('.student-auth-message'));
+		message.textContent = localize('studentAuthRequiredCourseDetail', "Sign in to your school account to view course details and assignments.");
+		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
+		button.textContent = localize('studentAuthSignInButton', "Sign In");
+		addDisposableListener(button, EventType.CLICK, async () => {
+			await this.commandService.executeCommand('student.signIn');
+			const authed = await hasStoredStudentAuth(this.secretStorageService);
+			if (authed) {
+				// After sign-in, re-run setInput with existing input to load content.
+				const currentInput = this.input;
+				if (currentInput) {
+					void this.setInput(currentInput, {}, {}, CancellationToken.None);
+				}
+			}
+		});
 	}
 
 	private renderCourseHeader(course: ICourse): void {
@@ -96,7 +196,7 @@ export class CourseDetailEditor extends EditorPane {
 		// Course info
 		const info = append(header, $('.course-info'));
 
-		const title = append(info, $('h1.course-title'));
+		const title = append(info, $('h1.course-header-title'));
 		title.textContent = course.name;
 
 		const meta = append(info, $('.course-meta'));
@@ -112,7 +212,7 @@ export class CourseDetailEditor extends EditorPane {
 
 		// Course description
 		if (course.description) {
-			const description = append(info, $('.course-description'));
+			const description = append(info, $('.course-header-description'));
 			description.textContent = course.description;
 		}
 
@@ -192,6 +292,104 @@ export class CourseDetailEditor extends EditorPane {
 		});
 	}
 
+	private async renderSubmissionDetails(assignment: IAssignment): Promise<void> {
+		if (this.submissionContainer) {
+			this.submissionContainer.remove();
+			this.submissionContainer = undefined;
+		}
+
+		const container = append(this.assignmentsContainer, $('.submission-section'));
+		this.submissionContainer = container;
+
+		const header = append(container, $('.section-header'));
+		const title = append(header, $('h2'));
+		title.textContent = 'Submission';
+
+		const submission = await this.assignmentsService.getSubmission(assignment.id);
+		if (!submission) {
+			const message = append(container, $('.empty-state'));
+			message.textContent = 'No submission details are available for this assignment.';
+			return;
+		}
+
+		const meta = append(container, $('.submission-meta'));
+		const statusItem = append(meta, $('.meta-item'));
+		statusItem.textContent = submission.submitted ? 'Submitted' : 'Not Submitted';
+
+		if (submission.submittedAt) {
+			const submittedAt = append(meta, $('.meta-item'));
+			submittedAt.textContent = `Submitted at: ${submission.submittedAt.toLocaleString()}`;
+		}
+
+		const scoreItem = append(meta, $('.meta-item'));
+		if (submission.score !== null && typeof submission.score === 'number') {
+			scoreItem.textContent = `Score: ${submission.score}`;
+		} else {
+			scoreItem.textContent = 'Score: Not graded yet';
+		}
+
+		if (submission.feedback) {
+			const feedback = append(container, $('.submission-feedback'));
+			feedback.textContent = submission.feedback;
+		}
+
+		if (submission.files && submission.files.length) {
+			const filesHeader = append(container, $('h3'));
+			filesHeader.textContent = 'Submitted Files';
+			const list = append(container, $('ul.submission-files'));
+			for (const file of submission.files) {
+				const item = append(list, $('li'));
+				const nameSpan = append(item, $('span.filename'));
+				nameSpan.textContent = file.filename;
+				const typeSpan = append(item, $('span.mime-type'));
+				typeSpan.textContent = ` (${file.mimeType})`;
+				const previewBtn = append(item, $('button.btn-secondary'));
+				previewBtn.textContent = 'Preview';
+				addDisposableListener(previewBtn, EventType.CLICK, e => {
+					e.stopPropagation();
+					this.openerService.open(URI.parse(file.url));
+				});
+			}
+		} else {
+			const noFiles = append(container, $('.empty-state'));
+			noFiles.textContent = 'No files were submitted with this assignment.';
+		}
+	}
+
+	private renderAssignmentFiles(assignment: IAssignment): void {
+		const container = append(this.assignmentsContainer, $('.submission-section assignment-files-section'));
+
+		const header = append(container, $('.section-header'));
+		const title = append(header, $('h2'));
+		title.textContent = 'Assignment Files';
+
+		if (!assignment.files || assignment.files.length === 0) {
+			const empty = append(container, $('.empty-state'));
+			empty.textContent = 'No files are attached to this assignment.';
+			return;
+		}
+
+		const list = append(container, $('ul.submission-files'));
+		for (const file of assignment.files) {
+			const item = append(list, $('li'));
+			const nameSpan = append(item, $('span.filename'));
+			nameSpan.textContent = file.name;
+			const typeSpan = append(item, $('span.mime-type'));
+			typeSpan.textContent = ` (${file.type}${file.required ? ', required' : ''})`;
+			const previewBtn = append(item, $('button.btn-secondary'));
+			previewBtn.textContent = 'Preview';
+			addDisposableListener(previewBtn, EventType.CLICK, e => {
+				e.stopPropagation();
+				const url = file.downloadUrl;
+				if (!url) {
+					console.warn('No download URL available for assignment file', file.name);
+					return;
+				}
+				this.openerService.open(URI.parse(url));
+			});
+		}
+	}
+
 	private createAssignmentCard(assignment: IAssignment): HTMLElement {
 		const card = $('.assignment-card');
 
@@ -233,28 +431,28 @@ export class CourseDetailEditor extends EditorPane {
 		if (assignment.status === AssignmentStatus.NotStarted) {
 			const startBtn = append(actionsContainer, $('button.btn-primary'));
 			startBtn.textContent = 'Start Assignment';
-			addDisposableListener(startBtn, EventType.CLICK, (e) => {
+			addDisposableListener(startBtn, EventType.CLICK, e => {
 				e.stopPropagation();
 				this.startAssignment(assignment);
 			});
 		} else if (assignment.status === AssignmentStatus.InProgress || assignment.status === AssignmentStatus.Overdue) {
 			const continueBtn = append(actionsContainer, $('button.btn-secondary'));
 			continueBtn.textContent = 'Continue Working';
-			addDisposableListener(continueBtn, EventType.CLICK, (e) => {
+			addDisposableListener(continueBtn, EventType.CLICK, e => {
 				e.stopPropagation();
 				this.openAssignmentFiles(assignment);
 			});
 
 			const submitBtn = append(actionsContainer, $('button.btn-primary'));
 			submitBtn.textContent = 'Submit';
-			addDisposableListener(submitBtn, EventType.CLICK, (e) => {
+			addDisposableListener(submitBtn, EventType.CLICK, e => {
 				e.stopPropagation();
 				this.submitAssignment(assignment);
 			});
 		} else if (assignment.status === AssignmentStatus.Submitted) {
 			const viewBtn = append(actionsContainer, $('button.btn-secondary'));
 			viewBtn.textContent = 'View Submission';
-			addDisposableListener(viewBtn, EventType.CLICK, (e) => {
+			addDisposableListener(viewBtn, EventType.CLICK, e => {
 				e.stopPropagation();
 				this.viewSubmission(assignment);
 			});
@@ -303,14 +501,16 @@ export class CourseDetailEditor extends EditorPane {
 	}
 
 	private openAssignmentDetail(assignment: IAssignment): void {
-		const input = new AssignmentDetailInput(assignment);
+		const input = new AssignmentDetailInput(assignment, 'details');
 		this.editorService.openEditor(input);
 	}
 
 	private async startAssignment(assignment: IAssignment): Promise<void> {
-		// Start assignment - download files, etc.
+		// Start assignment - download files
 		await this.assignmentsService.startAssignment(assignment.id);
-		// Refresh view
+		// Immediately open the assignment folder so the student sees the files
+		await this.assignmentsService.openAssignmentFolder(assignment.id);
+		// Refresh view (status / buttons may have changed)
 		const input = this.input as CourseDetailInput;
 		this.setInput(input, {}, {}, CancellationToken.None);
 	}
@@ -321,16 +521,27 @@ export class CourseDetailEditor extends EditorPane {
 	}
 
 	private async submitAssignment(assignment: IAssignment): Promise<void> {
-		// Submit assignment
-		await this.assignmentsService.submitAssignment(assignment.id);
-		// Refresh view
+		const selection = await this.fileDialogService.showOpenDialog({
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: true,
+			title: 'Select Assignment Files to Submit',
+			openLabel: 'Submit'
+		});
+
+		if (!selection || !selection.length) {
+			return;
+		}
+
+		const fileUris = selection.map(uri => uri.toString());
+		await this.assignmentsService.submitAssignment(assignment.id, fileUris);
 		const input = this.input as CourseDetailInput;
 		this.setInput(input, {}, {}, CancellationToken.None);
 	}
 
 	private viewSubmission(assignment: IAssignment): void {
 		// Open submission details
-		const input = new AssignmentDetailInput(assignment);
+		const input = new AssignmentDetailInput(assignment, 'submission');
 		this.editorService.openEditor(input);
 	}
 
@@ -346,6 +557,7 @@ export class CourseDetailEditor extends EditorPane {
 		if (this.assignmentsContainer) {
 			clearNode(this.assignmentsContainer);
 		}
+		this.submissionContainer = undefined;
 		this.assignmentsGrid = undefined;
 		super.clearInput();
 	}

@@ -9,16 +9,15 @@ import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IAssignment } from '../common/studentAssignmentsService.js';
 
 export class AssignmentDetailInput extends EditorInput {
-	override get resource(): URI | undefined {
-		throw new Error('Method not implemented.');
-	}
 	static readonly ID: string = 'workbench.input.assignmentDetail';
 
 	readonly assignment: IAssignment;
+	readonly view: 'details' | 'submission';
 
-	constructor(assignment: IAssignment) {
+	constructor(assignment: IAssignment, view: 'details' | 'submission' = 'details') {
 		super();
 		this.assignment = assignment;
+		this.view = view;
 	}
 
 	override get typeId(): string {
@@ -27,6 +26,11 @@ export class AssignmentDetailInput extends EditorInput {
 
 	override get capabilities(): EditorInputCapabilities {
 		return EditorInputCapabilities.Readonly;
+	}
+
+	override get resource(): URI | undefined {
+		// Logical editor, no backing file resource
+		return undefined;
 	}
 
 	override getName(): string {
@@ -39,7 +43,7 @@ export class AssignmentDetailInput extends EditorInput {
 		}
 
 		if (otherInput instanceof AssignmentDetailInput) {
-			return otherInput.assignment.id === this.assignment.id;
+			return otherInput.assignment.id === this.assignment.id && otherInput.view === this.view;
 		}
 
 		return false;

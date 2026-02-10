@@ -20,6 +20,10 @@ import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { IStudentService, IChatMessage } from '../common/studentService.js';
 import { renderMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { hasStoredStudentAuth } from '../common/studentAuth.js';
+import { localize } from '../../../../nls.js';
 
 export class StudentChatPanel extends ViewPane {
 	private _chatContainer!: HTMLElement;
@@ -53,6 +57,8 @@ export class StudentChatPanel extends ViewPane {
 		@IStudentService private readonly studentService: IStudentService,
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
+		@ICommandService private readonly commandService: ICommandService,
+		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 	) {
 		super(
 			options,
@@ -73,7 +79,10 @@ export class StudentChatPanel extends ViewPane {
 		super.renderBody(container);
 
 		this._chatContainer = append(container, $('.student-chat-panel'));
+		void this._initialize();
+	}
 
+	private _createLayout(): void {
 		// Messages container with scroll
 		this._messagesContainer = append(this._chatContainer, $('.chat-messages'));
 
@@ -82,19 +91,29 @@ export class StudentChatPanel extends ViewPane {
 
 		// Message Input
 		this._messageInput = append(this._inputContainer, $('textarea.chat-input')) as HTMLTextAreaElement;
-		this._messageInput.placeholder = 'Ask me anything about your learning...';
+		this._messageInput.placeholder = localize('studentChatPlaceholder', "Ask me anything about your learning...");
 		this._messageInput.setAttribute('aria-label', 'Chat message input');
 
 		// Send Button
 		this._sendButton = append(this._inputContainer, $('button.chat-send-button', { 'aria-label': 'Send message' })) as HTMLButtonElement;
-		this._sendButton.textContent = 'Send';
+		this._sendButton.textContent = localize('studentChatSend', "Send");
 
 		// Clear Button
 		this._clearButton = append(this._inputContainer, $('button.chat-clear-button', { 'aria-label': 'Clear chat history' })) as HTMLButtonElement;
-		this._clearButton.textContent = 'Clear';
+		this._clearButton.textContent = localize('studentChatClear', "Clear");
 
 		this._setupEventListeners();
-		this._loadChatHistory();
+	}
+
+	private async _initialize(): Promise<void> {
+		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
+		if (!isAuthed) {
+			this._renderSignInPrompt();
+			return;
+		}
+
+		this._createLayout();
+		await this._loadChatHistory();
 	}
 
 	private _setupEventListeners(): void {
@@ -200,6 +219,30 @@ export class StudentChatPanel extends ViewPane {
 		} catch (error) {
 			console.error('Failed to load chat history:', error);
 		}
+	}
+
+	private _renderSignInPrompt(): void {
+		// Clear container and show sign-in CTA
+		while (this._chatContainer.firstChild) {
+			this._chatContainer.removeChild(this._chatContainer.firstChild);
+		}
+
+		const wrapper = append(this._chatContainer, $('.student-auth-required'));
+		const message = append(wrapper, $('.student-auth-message'));
+		message.textContent = localize('studentAuthRequiredChat', "Sign in to your school account to chat with the AI assistant.");
+		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
+		button.textContent = localize('studentAuthSignInButton', "Sign In");
+		this._register(addDisposableListener(button, 'click', async () => {
+			await this.commandService.executeCommand('student.signIn');
+			const authed = await hasStoredStudentAuth(this.secretStorageService);
+			if (authed) {
+				while (this._chatContainer.firstChild) {
+					this._chatContainer.removeChild(this._chatContainer.firstChild);
+				}
+				this._createLayout();
+				await this._loadChatHistory();
+			}
+		}));
 	}
 
 	private async _clearChat(): Promise<void> {

@@ -32,6 +32,9 @@ import { localize } from '../../../../nls.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { CourseDetailInput } from './courseDetailInput.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { hasStoredStudentAuth } from '../../student/common/studentAuth.js';
 
 export const STUDENT_ASSIGNMENTS_VIEW_CONTAINER_ID = 'workbench.view.studentAssignments';
 
@@ -114,8 +117,10 @@ class StudentAssignmentsCourseRenderer implements ITreeRenderer<ICourse, FuzzySc
 
 	renderElement(node: ITreeNode<ICourse, FuzzyScore>, _index: number, templateData: ICourseTemplateData): void {
 		const course = node.element;
+		// Sidebar shows only the course name; details are in the editor view.
 		templateData.title.textContent = course.name;
-		templateData.description.textContent = course.description || `${course.instructor} - ${course.term}`;
+		// No secondary description line.
+		templateData.description.textContent = '';
 	}
 
 	disposeTemplate(_template: ICourseTemplateData): void {
@@ -192,6 +197,7 @@ export class StudentAssignmentsView extends ViewPane {
 	static readonly ID = 'workbench.view.studentAssignments.courses';
 
 	private tree!: WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>;
+	private bodyContainer!: HTMLElement;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -206,6 +212,8 @@ export class StudentAssignmentsView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
 		@IEditorService private readonly editorService: IEditorService,
+		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 	}
@@ -213,8 +221,26 @@ export class StudentAssignmentsView extends ViewPane {
 	protected override renderBody(container: HTMLElement): void {
 		super.renderBody(container);
 		container.classList.add('student-assignments-view');
-		const treeContainer = append(container, $('.student-assignments-tree'));
+		this.bodyContainer = append(container, $('.student-assignments-root'));
+		void this.initialize();
+	}
 
+	private async initialize(): Promise<void> {
+		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
+		if (!isAuthed) {
+			this.renderSignInPrompt();
+			return;
+		}
+		const courses = await this.assignmentsService.getCourses();
+		if (!courses.length) {
+			this.renderEmptyState();
+			return;
+		}
+		this.createTree();
+	}
+
+	private createTree(): void {
+		const treeContainer = append(this.bodyContainer, $('.student-assignments-tree'));
 		this.tree = this._register(this.instantiationService.createInstance(
 			WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>,
 			'StudentAssignmentsTree',
@@ -252,14 +278,39 @@ export class StudentAssignmentsView extends ViewPane {
 		}));
 	}
 
+	private renderSignInPrompt(): void {
+		const wrapper = append(this.bodyContainer, $('.student-auth-required'));
+		const message = append(wrapper, $('.student-auth-message'));
+		message.textContent = localize('studentAuthRequiredCourses', "Sign in to your school account to view your courses.");
+		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
+		button.textContent = localize('studentAuthSignInButton', "Sign In");
+		button.addEventListener('click', async () => {
+			await this.commandService.executeCommand('student.signIn');
+			const authed = await hasStoredStudentAuth(this.secretStorageService);
+			if (authed) {
+				this.bodyContainer.innerHTML = '';
+				this.createTree();
+			}
+		});
+	}
+
+	private renderEmptyState(): void {
+		const wrapper = append(this.bodyContainer, $('.empty-state'));
+		wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	}
+
 	protected override layoutBody(height: number, width: number): void {
 		super.layoutBody(height, width);
-		this.tree.layout(height, width);
+		if (this.tree) {
+			this.tree.layout(height, width);
+		}
 	}
 
 	override focus(): void {
 		super.focus();
-		this.tree.domFocus();
+		if (this.tree) {
+			this.tree.domFocus();
+		}
 	}
 
 	private openCourse(course: ICourse): void {

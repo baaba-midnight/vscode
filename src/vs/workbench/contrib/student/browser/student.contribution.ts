@@ -13,12 +13,64 @@ import { StudentAssignmentPanel } from './studentAssignmentPanel.js';
 import { IStudentService, StudentService } from '../common/studentService.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { ApiClient } from '../common/apiClients.js';
+import { loginStudent } from '../common/studentAuth.js';
+import { MenuRegistry, MenuId } from '../../../../platform/actions/common/actions.js';
 import './media/student.css';
 
 console.log('[Student] Registering student service and UI contributions');
 
 // Register Student Service as a singleton
 registerSingleton(IStudentService, StudentService, InstantiationType.Delayed);
+
+// Commands for explicit sign-in / sign-out
+export const STUDENT_SIGN_IN_COMMAND_ID = 'student.signIn';
+export const STUDENT_SIGN_OUT_COMMAND_ID = 'student.signOut';
+
+CommandsRegistry.registerCommand(STUDENT_SIGN_IN_COMMAND_ID, async accessor => {
+	const quickInputService = accessor.get(IQuickInputService);
+	const commandService = accessor.get(ICommandService);
+	const secretStorageService = accessor.get(ISecretStorageService);
+	const apiClient = new ApiClient(commandService);
+
+	const authContext = await loginStudent(commandService, apiClient, await quickInputService.input({
+		prompt: 'Student email',
+		placeHolder: 'student@example.com'
+	}) || '', await quickInputService.input({
+		prompt: 'Password',
+		password: true
+	}) || '');
+	if (authContext.authToken) {
+		await secretStorageService.set('student.ide.authToken', authContext.authToken);
+	}
+	if (authContext.studentId) {
+		await secretStorageService.set('student.ide.studentId', authContext.studentId);
+	}
+});
+
+CommandsRegistry.registerCommand(STUDENT_SIGN_OUT_COMMAND_ID, async accessor => {
+	const secretStorageService = accessor.get(ISecretStorageService);
+	await secretStorageService.delete('student.ide.authToken');
+	await secretStorageService.delete('student.ide.studentId');
+});
+
+// Surface commands in the Command Palette
+MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
+	command: {
+		id: STUDENT_SIGN_IN_COMMAND_ID,
+		title: localize2('studentSignIn', 'Student: Sign In')
+	}
+});
+
+MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
+	command: {
+		id: STUDENT_SIGN_OUT_COMMAND_ID,
+		title: localize2('studentSignOut', 'Student: Sign Out')
+	}
+});
 
 // Register Student Chat Panel View Container
 const VIEW_CONTAINER = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({

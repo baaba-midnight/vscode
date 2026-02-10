@@ -24,6 +24,10 @@ import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { hasStoredStudentAuth } from '../common/studentAuth.js';
+import { localize } from '../../../../nls.js';
 
 export class StudentAssignmentPanel extends ViewPane {
 	private _containerElement!: HTMLElement;
@@ -51,6 +55,8 @@ export class StudentAssignmentPanel extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@ICommandService private readonly commandService: ICommandService,
+		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 	) {
 		super(
 			options,
@@ -77,17 +83,27 @@ export class StudentAssignmentPanel extends ViewPane {
 		super.renderBody(container);
 
 		this._containerElement = append(container, $('.student-task-panel'));
+		this._createLayout();
+		void this._initialize();
+	}
 
+	private _createLayout(): void {
+		clearNode(this._containerElement);
 		// Top: current assignment details
 		this._currentTaskContainer = append(this._containerElement, $('.current-task-container'));
-
 		// Bottom: list of assignments (for context and selection)
 		this._tasksListContainer = append(this._containerElement, $('.tasks-list-container'));
-
 		// Reflection form
 		this._reflectionContainer = append(this._containerElement, $('.reflection-container'));
+	}
 
-		this._loadTasks();
+	private async _initialize(): Promise<void> {
+		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
+		if (!isAuthed) {
+			this._renderSignInPrompt();
+			return;
+		}
+		await this._loadTasks();
 	}
 
 	private async _loadTasks(): Promise<void> {
@@ -99,6 +115,23 @@ export class StudentAssignmentPanel extends ViewPane {
 		} catch (error) {
 			console.error('Failed to load student tasks:', error);
 		}
+	}
+
+	private _renderSignInPrompt(): void {
+		clearNode(this._containerElement);
+		const wrapper = append(this._containerElement, $('.student-auth-required'));
+		const message = append(wrapper, $('.student-auth-message'));
+		message.textContent = localize('studentAuthRequiredAssignmentsPanel', "Sign in to your school account to view assignments.");
+		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
+		button.textContent = localize('studentAuthSignInButton', "Sign In");
+		this._register(addDisposableListener(button, 'click', async () => {
+			await this.commandService.executeCommand('student.signIn');
+			const authed = await hasStoredStudentAuth(this.secretStorageService);
+			if (authed) {
+				this._createLayout();
+				await this._loadTasks();
+			}
+		}));
 	}
 
 	private _updateCurrentTask(): void {

@@ -17,13 +17,18 @@ export interface IStudentAuthContext {
 const STUDENT_AUTH_TOKEN_KEY = 'student.ide.authToken';
 const STUDENT_AUTH_STUDENT_ID_KEY = 'student.ide.studentId';
 
+export async function hasStoredStudentAuth(secretStorageService: ISecretStorageService): Promise<boolean> {
+	const token = await secretStorageService.get(STUDENT_AUTH_TOKEN_KEY);
+	return !!token;
+}
+
 export async function loginStudent(
 	commandService: ICommandService,
 	apiClient: ApiClient,
 	email: string,
 	password: string
 ): Promise<IStudentAuthContext> {
-	const response = await apiClient.post<{ access_token?: string; user?: { user_id?: string;[key: string]: unknown };[key: string]: unknown }>(
+	const response = await apiClient.post<{ access_token?: string; refresh_token?: string; user?: { user_id?: string;[key: string]: unknown };[key: string]: unknown }>(
 		'/users/login',
 		{ email, password }
 	);
@@ -35,6 +40,14 @@ export async function loginStudent(
 	const token = response.data?.access_token as string | undefined;
 	const studentId = response.data?.user?.user_id as string | undefined;
 
+	apiClient.setAuthToken(token);
+
+	if (!token) {
+		throw new Error('Login response did not include an access token');
+	}
+
+	// Persist the token immediately via the ApiClient; caller is responsible
+	// for storing tokens in secret storage when appropriate.
 	apiClient.setAuthToken(token);
 
 	return { apiClient, authToken: token, studentId };
@@ -51,7 +64,23 @@ export async function ensureStudentAuth(
 	apiClient: ApiClient,
 	secretStorageService: ISecretStorageService
 ): Promise<IStudentAuthContext | undefined> {
-	// Always prompt for credentials (loop until success or user cancels)
+	// 1. Try to restore existing session from secret storage (auto-login)
+	try {
+		const storedToken = await secretStorageService.get(STUDENT_AUTH_TOKEN_KEY);
+		const storedStudentId = await secretStorageService.get(STUDENT_AUTH_STUDENT_ID_KEY);
+		if (storedToken) {
+			apiClient.setAuthToken(storedToken);
+			return {
+				apiClient,
+				authToken: storedToken,
+				studentId: storedStudentId ?? undefined
+			};
+		}
+	} catch (error) {
+		console.error('Failed to restore student auth from storage:', error);
+	}
+
+	// 2. If none, prompt for email/password and log in (with retry on failure)
 	while (true) {
 		const email = await quickInputService.input({
 			prompt: 'Student email',
