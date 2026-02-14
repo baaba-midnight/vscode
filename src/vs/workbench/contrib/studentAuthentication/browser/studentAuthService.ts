@@ -50,6 +50,10 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		return this._state;
 	}
 
+	get studentId(): string | undefined {
+		return this._studentId;
+	}
+
 	/**
 	 * Wait for the auth service to complete initialization
 	 */

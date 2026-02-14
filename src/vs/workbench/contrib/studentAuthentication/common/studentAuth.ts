@@ -40,6 +40,9 @@ export interface IStudentAuthService {
 	/* current auth state */
 	readonly state: AuthState;
 
+	/** current student id, if known */
+	readonly studentId: string | undefined;
+
 	/*
 	* event fired with the state changes
 	*/
@@ -127,7 +130,7 @@ export async function loginStudent(
 		refresh_token?: string;
 		student_id?: string;
 		expires_in?: number;
-	}>('/auth/login', { email, password });
+	}>('/users/login', { email, password });
 
 	if (!response.success || !response.data) {
 		throw new Error('Login failed: Invalid credentials');
