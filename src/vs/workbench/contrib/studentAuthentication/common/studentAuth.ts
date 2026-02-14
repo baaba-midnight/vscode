@@ -1,0 +1,148 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { Event } from '../../../../base/common/event.js';
+import { ApiClient } from '../common/apiClients.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ISecretStorageProvider } from '../../../../platform/secrets/common/secrets.js';
+
+export const IStudentAuthService = createDecorator<IStudentAuthService>('studentAuthService');
+
+// authentication keys for user login and session management
+export const STUDENT_AUTH_TOKEN_KEY = 'student-auth-token';
+export const STUDENT_AUTH_REFRESH_TOKEN_KEY = 'student-auth-refresh-token';
+export const STUDENT_AUTH_STUDENT_ID_KEY = 'student-auth-student-id';
+
+// define authentication states
+export enum AuthState {
+	Uninitialized = 'uninitialized',
+	Authenticated = 'authenticated',
+	Unauthenticated = 'unauthenticated'
+}
+
+export interface IAuthContext {
+	authToken: string;
+	refreshToken?: string;
+	studentId?: string;
+	expiresAt?: number;
+}
+
+/*
+*Student Authentication service which will be fully implemented in
+*./contrib/studentAuthentication/browser/studentAuthService.ts
+*/
+export interface IStudentAuthService {
+	readonly _serviceBrand: undefined;
+
+	/* current auth state */
+	readonly state: AuthState;
+
+	/*
+	* event fired with the state changes
+	*/
+	readonly onDidAuthStateChange: Event<AuthState>;
+
+	/*
+	* Promise that resolves when the auth service is fully initialized
+	*/
+	whenReady(): Promise<void>;
+
+	/*
+	* get a valid access token, refreshing if necessary @returns access token or undefined if not authenticated
+	*/
+	getValidAccessToken(): Promise<string | undefined>;
+
+	/**
+	 * Perform login with email and password
+	 * @param email Student email
+	 * @param password Student password
+	 * @returns Authentication context with tokens
+	 */
+	login(email: string, password: string): Promise<IAuthContext>;
+
+	/**
+	 * Logout and clear all stored tokens
+	 */
+	logout(): Promise<void>;
+
+	/**
+	 * Check if tokens exist in storage
+	 */
+	hasStoredAuth(): Promise<boolean>;
+
+	/**
+	 * Refresh the access token using the refresh token
+	 */
+	refreshAccessToken(): Promise<boolean>;
+}
+
+/**
+ * Helper function to check if stored authentication exists
+ */
+export async function hasStoredStudentAuth(secretStorage: ISecretStorageProvider): Promise<boolean> {
+	const token = await secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
+	return !!token;
+}
+
+/**
+ * Helper function to decode JWT and extract expiry
+ */
+export function decodeJWT(token: string): { exp?: number; key?: string } {
+	try {
+		const payload = token.split('.')[1];
+		const decoded = JSON.parse(atob(payload));
+		return decoded;
+	} catch (error) {
+		console.error('Failed to decode JWT:', error);
+		return {};
+	}
+}
+
+/**
+ * Check if a JWT token is expired
+ */
+export function isTokenExpired(token: string): boolean {
+	const decoded = decodeJWT(token);
+	if (!decoded.exp) {
+		return true;
+	}
+	// Add 30 second buffer to prevent edge cases
+	return Date.now() >= (decoded.exp * 1000) - 30000;
+}
+
+/**
+ * Login helper function to authenticate with backend
+ */
+export async function loginStudent(
+	commandService: ICommandService,
+	apiClient: ApiClient,
+	email: string,
+	password: string
+): Promise<IAuthContext> {
+	const response = await apiClient.post<{
+		access_token: string;
+		refresh_token?: string;
+		student_id?: string;
+		expires_in?: number;
+	}>('/auth/login', { email, password });
+
+	if (!response.success || !response.data) {
+		throw new Error('Login failed: Invalid credentials');
+	}
+
+	const authContext: IAuthContext = {
+		authToken: response.data.access_token,
+		refreshToken: response.data.refresh_token,
+		studentId: response.data.student_id,
+	};
+
+	// Calculate expiry time if provided
+	if (response.data.expires_in) {
+		authContext.expiresAt = Date.now() + (response.data.expires_in * 1000);
+	}
+
+	return authContext;
+}

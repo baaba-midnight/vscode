@@ -18,12 +18,12 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
-import { IStudentService, IChatMessage, IStudentAssignment } from '../common/studentService.js';
+import { IStudentService, IChatMessage, IStudentAssignment } from '../common/studentChatService.js';
 import { renderMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { hasStoredStudentAuth } from '../common/studentAuth.js';
+import { hasStoredStudentAuth } from '../../studentAuthentication/common/studentAuth.js';
 import { localize } from '../../../../nls.js';
 import { toDisposable } from '../../../../base/common/lifecycle.js';
 

@@ -7,11 +7,8 @@ import { Event, Emitter } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
-import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { ApiClient } from '../../student/common/apiClients.js';
+import { ApiClient } from '../../studentAuthentication/common/apiClients.js';
 import { CourseResponse, AssignmentResponse, AssignmentFile } from './types.js';
-import { ensureStudentAuth } from '../../student/common/studentAuth.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
 import { joinPath } from '../../../../base/common/resources.js';
@@ -21,6 +18,7 @@ import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { streamToBuffer } from '../../../../base/common/buffer.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceEditingService } from '../../../services/workspaces/common/workspaceEditing.js';
+import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
 
 export const IStudentAssignmentsService = createDecorator<IStudentAssignmentsService>('studentAssignmentsService');
 
@@ -191,8 +189,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
-		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
+		@IStudentAuthService private readonly authService: IStudentAuthService,
 		@IFileService private readonly fileService: IFileService,
 		@IPathService private readonly pathService: IPathService,
 		@IRequestService private readonly requestService: IRequestService,
@@ -201,19 +198,38 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	) {
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
 		this.apiClient = new ApiClient(this.commandService, baseURL);
+
+		console.log('[StudentAssignmentsService] Service initialized');
 	}
 
-	private async ensureInitialized(): Promise<boolean> {
-		const authContext = await ensureStudentAuth(this.quickInputService, this.commandService, this.apiClient, this.secretStorageService);
-		if (!authContext) {
+	/**
+	 * Ensure the user is authenticated before making API calls
+	 */
+	private async ensureAuthenticated(): Promise<boolean> {
+		// Wait for auth service to be ready
+		await this.authService.whenReady();
+
+		// Check if authenticated
+		if (this.authService.state !== AuthState.Authenticated) {
+			console.warn('[StudentAssignmentsService] Not authenticated');
 			return false;
 		}
+
+		// Get valid access token (will refresh if needed)
+		const token = await this.authService.getValidAccessToken();
+		if (!token) {
+			console.warn('[StudentAssignmentsService] No valid access token');
+			return false;
+		}
+
+		// Set token in API client
+		this.apiClient.setAuthToken(token);
 		return true;
 	}
 
 	async getCourses(): Promise<ICourse[]> {
-		if (!await this.ensureInitialized()) {
-			return this.courses;
+		if (!await this.ensureAuthenticated()) {
+			return this.courses; // Return cached courses if not authenticated
 		}
 
 		if (!this.courses.length) {
@@ -224,7 +240,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	}
 
 	async getCourse(courseId: string): Promise<ICourse | undefined> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return this.courses.find(c => c.id === courseId);
 		}
 
@@ -235,17 +251,29 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 		try {
 			const response = await this.apiClient.get<CourseResponse>(`/student/courses/${courseId}`);
-			const course = this.toCourse(response.data);
-			this.courses.push(course);
-			return course;
+			if (response.success && response.data) {
+				const course = this.toCourse(response.data);
+				this.courses.push(course);
+				return course;
+			}
 		} catch (error) {
-			console.error('Failed to fetch course details', error);
-			return undefined;
+			console.error('[StudentAssignmentsService] Failed to fetch course details', error);
+
+			// Handle 401 errors by attempting refresh
+			if ((error).status === 401) {
+				const refreshed = await this.authService.refreshAccessToken();
+				if (refreshed) {
+					// Retry after refresh
+					return this.getCourse(courseId);
+				}
+			}
 		}
+
+		return undefined;
 	}
 
 	async getAssignmentsByCourse(courseId: string): Promise<IAssignment[]> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return this.assignments.get(courseId) || [];
 		}
 
@@ -257,91 +285,50 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	}
 
 	async getAssignment(assignmentId: string): Promise<IAssignment | undefined> {
-		let cached: IAssignment | undefined;
-		for (const assignments of this.assignments.values()) {
-			const assignment = assignments.find(a => a.id === assignmentId);
-			if (assignment) {
-				cached = assignment;
-				break;
-			}
-		}
-
-		if (!await this.ensureInitialized()) {
-			return cached;
-		}
-
-		try {
-			const response = await this.apiClient.get<AssignmentResponse>(`/student/assignments/${assignmentId}`);
-			const normalized = this.toAssignment(response.data);
-			const existing = this.assignments.get(normalized.courseId) || [];
-			if (!existing.some(a => a.id === normalized.id)) {
-				existing.push(normalized);
-				this.assignments.set(normalized.courseId, existing);
-			} else {
-				for (let i = 0; i < existing.length; i++) {
-					if (existing[i].id === normalized.id) {
-						existing[i] = normalized;
-						break;
-					}
+		if (!await this.ensureAuthenticated()) {
+			// Search in cache
+			for (const assignments of this.assignments.values()) {
+				const found = assignments.find(a => a.id === assignmentId);
+				if (found) {
+					return found;
 				}
 			}
-			return normalized;
-		} catch (error) {
-			console.error('Failed to fetch assignment details', error);
-			return cached;
+			return undefined;
 		}
+
+		// Search in cache first
+		for (const assignments of this.assignments.values()) {
+			const found = assignments.find(a => a.id === assignmentId);
+			if (found) {
+				return found;
+			}
+		}
+
+		// Fetch from API
+		try {
+			const response = await this.apiClient.get<AssignmentResponse>(`/student/assignments/${assignmentId}`);
+			if (response.success && response.data) {
+				const assignment = this.toAssignment(response.data);
+				this.updateAssignmentCache(assignment);
+				return assignment;
+			}
+		} catch (error) {
+			console.error('[StudentAssignmentsService] Failed to fetch assignment details', error);
+
+			// Handle 401 errors
+			if ((error).status === 401) {
+				const refreshed = await this.authService.refreshAccessToken();
+				if (refreshed) {
+					return this.getAssignment(assignmentId);
+				}
+			}
+		}
+
+		return undefined;
 	}
 
 	async startAssignment(assignmentId: string): Promise<void> {
-		if (!await this.ensureInitialized()) {
-			return;
-		}
-
-		const existingAssignment = await this.getAssignment(assignmentId);
-		if (!existingAssignment) {
-			return;
-		}
-
-		console.log(`[START ASSIGNMENT] ${assignmentId} | ${existingAssignment.title}`);
-
-		try {
-			// The start endpoint can return either a full AssignmentResponse or just an array of AssignmentFile
-			const response = await this.apiClient.post<AssignmentResponse | AssignmentFile[]>(`/student/assignments/${assignmentId}/start`, {});
-			let updatedAssignment: IAssignment | undefined;
-			if (response && response.data) {
-
-				console.log(`[START ASSIGNMENT] API response received for assignment ${assignmentId}`, JSON.stringify(response));
-
-				const data = response.data as AssignmentResponse | AssignmentFile[];
-				if (Array.isArray(data)) {
-					// Backend returned just the files for this assignment
-					const files = data.map(file => this.toAssignmentFile(file));
-					updatedAssignment = {
-						...existingAssignment,
-						files
-					};
-					this.updateAssignmentCache(updatedAssignment);
-				} else {
-					// Backend returned a full assignment payload
-					updatedAssignment = this.toAssignment(data);
-					this.updateAssignmentCache(updatedAssignment);
-				}
-			} else {
-				await this.fetchAssignmentsForCourse(existingAssignment.courseId);
-				updatedAssignment = await this.getAssignment(assignmentId) || existingAssignment;
-			}
-
-			if (updatedAssignment) {
-				await this.downloadAssignmentFiles(updatedAssignment);
-				this._onDidChangeAssignments.fire(updatedAssignment.courseId);
-			}
-		} catch (error) {
-			console.error('Failed to start assignment', error);
-		}
-	}
-
-	async submitAssignment(assignmentId: string, fileUris: string[]): Promise<void> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return;
 		}
 
@@ -351,44 +338,66 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		}
 
 		try {
-			const payload = {
-				multipart: true,
-				fields: {
-					assignment_id: assignmentId
-				},
-				files: fileUris.map(uri => ({
-					fieldName: 'files',
-					uri
-				}))
-			};
-			console.log('Submitting assignment payload (studentAssignmentsService):', payload);
-			await this.apiClient.post<void>(`/student/assignments/${assignmentId}/submit`, payload);
-			await this.fetchAssignmentsForCourse(assignment.courseId);
+			// Call backend to mark assignment as started
+			await this.apiClient.post(`/student/assignments/${assignmentId}/start`, {});
+
+			// Download assignment files
+			await this.downloadAssignmentFiles(assignment);
+
+			// Update local cache
+			assignment.status = AssignmentStatus.InProgress;
+			this.updateAssignmentCache(assignment);
 			this._onDidChangeAssignments.fire(assignment.courseId);
 		} catch (error) {
-			console.error('Failed to submit assignment', error);
+			console.error('[StudentAssignmentsService] Failed to start assignment', error);
+			throw error;
+		}
+	}
+
+	async submitAssignment(assignmentId: string, fileUris: string[]): Promise<void> {
+		if (!await this.ensureAuthenticated()) {
+			return;
+		}
+
+		try {
+			await this.apiClient.post(`/student/assignments/${assignmentId}/submit`, {
+				file_uris: fileUris
+			});
+
+			// Update local cache
+			const assignment = await this.getAssignment(assignmentId);
+			if (assignment) {
+				assignment.status = AssignmentStatus.Submitted;
+				this.updateAssignmentCache(assignment);
+				this._onDidChangeAssignments.fire(assignment.courseId);
+			}
+		} catch (error) {
+			console.error('[StudentAssignmentsService] Failed to submit assignment', error);
 			throw error;
 		}
 	}
 
 	async getSubmission(assignmentId: string): Promise<ISubmission | undefined> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return undefined;
 		}
 
 		try {
 			const response = await this.apiClient.get<ISubmissionResponse>(`/student/assignments/${assignmentId}/submission`);
-			return this.toSubmission(response.data);
+			if (response.success && response.data) {
+				return this.toSubmission(response.data);
+			}
 		} catch (error) {
-			console.error('Failed to fetch assignment submission', error);
-			return undefined;
+			console.error('[StudentAssignmentsService] Failed to fetch assignment submission', error);
 		}
+
+		return undefined;
 	}
 
 	async openAssignmentFolder(assignmentId: string): Promise<void> {
-		console.log(`[OPEN ASSIGNMENT FOLDER] Attempting to open folder for assignment ${assignmentId}`);
+		console.log(`[StudentAssignmentsService] Opening folder for assignment ${assignmentId}`);
 
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return;
 		}
 
@@ -400,24 +409,21 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		try {
 			const folderUri = await this.downloadAssignmentFiles(assignment);
 
-			console.log(`[OPEN ASSIGNMENT FOLDER] Folder URI for assignment ${assignmentId}: ${folderUri}`);
-
 			if (folderUri) {
 				try {
-					// Prefer revealing in the OS file explorer when available
 					await this.commandService.executeCommand('revealFileInOS', folderUri);
 				} catch (error) {
-					console.error('Failed to reveal assignment folder in OS, falling back to workbench explorer', error);
+					console.error('[StudentAssignmentsService] Failed to reveal in OS, falling back to explorer', error);
 					await this.commandService.executeCommand('revealInExplorer', folderUri);
 				}
 			}
 		} catch (error) {
-			console.error('Failed to open assignment folder', error);
+			console.error('[StudentAssignmentsService] Failed to open assignment folder', error);
 		}
 	}
 
 	async openCourseFolder(courseId: string): Promise<void> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return;
 		}
 
@@ -430,19 +436,20 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			const root = await this.getAssignmentsRootFolder();
 			const courseFolder = joinPath(root, this.sanitizeName(course.name));
 			await this.fileService.createFolder(courseFolder);
+
 			try {
 				await this.commandService.executeCommand('revealFileInOS', courseFolder);
 			} catch (error) {
-				console.error('Failed to reveal course folder in OS, falling back to workbench explorer', error);
+				console.error('[StudentAssignmentsService] Failed to reveal in OS, falling back to explorer', error);
 				await this.commandService.executeCommand('revealInExplorer', courseFolder);
 			}
 		} catch (error) {
-			console.error('Failed to open course folder', error);
+			console.error('[StudentAssignmentsService] Failed to open course folder', error);
 		}
 	}
 
 	async refresh(): Promise<void> {
-		if (!await this.ensureInitialized()) {
+		if (!await this.ensureAuthenticated()) {
 			return;
 		}
 
@@ -454,19 +461,41 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	private async fetchCourses(): Promise<void> {
 		try {
 			const response = await this.apiClient.get<CourseResponse[]>('/student/courses');
-			this.courses = response.data.map(course => this.toCourse(course));
+			if (response.success && response.data) {
+				this.courses = response.data.map(course => this.toCourse(course));
+				console.log(`[StudentAssignmentsService] Fetched ${this.courses.length} courses`);
+			}
 		} catch (error) {
-			console.error('Failed to fetch courses', error);
+			console.error('[StudentAssignmentsService] Failed to fetch courses', error);
+
+			// Handle 401
+			if ((error).status === 401) {
+				const refreshed = await this.authService.refreshAccessToken();
+				if (refreshed) {
+					await this.fetchCourses();
+				}
+			}
 		}
 	}
 
 	private async fetchAssignmentsForCourse(courseId: string): Promise<void> {
 		try {
 			const response = await this.apiClient.get<AssignmentResponse[]>(`/student/courses/${courseId}/assignments`);
-			const normalized = response.data.map(assignment => this.toAssignment(assignment));
-			this.assignments.set(courseId, normalized);
+			if (response.success && response.data) {
+				const normalized = response.data.map(assignment => this.toAssignment(assignment));
+				this.assignments.set(courseId, normalized);
+				console.log(`[StudentAssignmentsService] Fetched ${normalized.length} assignments for course ${courseId}`);
+			}
 		} catch (error) {
-			console.error('Failed to fetch assignments for course', error);
+			console.error('[StudentAssignmentsService] Failed to fetch assignments for course', error);
+
+			// Handle 401
+			if ((error).status === 401) {
+				const refreshed = await this.authService.refreshAccessToken();
+				if (refreshed) {
+					await this.fetchAssignmentsForCourse(courseId);
+				}
+			}
 		}
 	}
 
@@ -597,7 +626,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			await this.workspaceEditingService.addFolders([{ uri: root }], true);
 			this.assignmentsRootWorkspaceEnsured = true;
 		} catch (error) {
-			console.error('Failed to add StudentAssignments root to workspace', error);
+			console.error('[StudentAssignmentsService] Failed to add StudentAssignments root to workspace', error);
 		}
 	}
 
@@ -623,8 +652,9 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 				const context = await this.requestService.request({ url: file.downloadUrl, type: 'GET' }, CancellationToken.None);
 				const buffer = await streamToBuffer(context.stream);
 				await this.fileService.writeFile(targetUri, buffer);
+				console.log(`[StudentAssignmentsService] Downloaded file: ${file.name}`);
 			} catch (error) {
-				console.error('Failed to download assignment file', file.name, error);
+				console.error('[StudentAssignmentsService] Failed to download assignment file', file.name, error);
 			}
 		}
 

@@ -32,9 +32,8 @@ import { localize } from '../../../../nls.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { CourseDetailInput } from './courseDetailInput.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { hasStoredStudentAuth } from '../../student/common/studentAuth.js';
+import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
 
 export const STUDENT_ASSIGNMENTS_VIEW_CONTAINER_ID = 'workbench.view.studentAssignments';
 
@@ -212,10 +211,22 @@ export class StudentAssignmentsView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
 		@IEditorService private readonly editorService: IEditorService,
-		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IStudentAuthService private readonly authService: IStudentAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Listen for auth state changes
+		this._register(this.authService.onDidAuthStateChange(state => {
+			console.log('[StudentAssignments] Auth state changed:', state);
+			if (state === AuthState.Authenticated) {
+				// Reload view when user logs in
+				this.refreshView();
+			} else if (state === AuthState.Unauthenticated) {
+				// Show login prompt when user logs out
+				this.showLoginPrompt();
+			}
+		}));
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -226,17 +237,46 @@ export class StudentAssignmentsView extends ViewPane {
 	}
 
 	private async initialize(): Promise<void> {
-		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
-		if (!isAuthed) {
+		console.log('[StudentAssignments] Initializing view...');
+
+		// Wait for auth service to be ready
+		await this.authService.whenReady();
+
+		// Check if authenticated
+		if (this.authService.state !== AuthState.Authenticated) {
+			console.log('[StudentAssignments] Not authenticated, showing login prompt');
 			this.renderSignInPrompt();
 			return;
 		}
-		const courses = await this.assignmentsService.getCourses();
-		if (!courses.length) {
-			this.renderEmptyState();
-			return;
+
+		console.log('[StudentAssignments] Authenticated, loading courses...');
+
+		// Load courses
+		try {
+			const courses = await this.assignmentsService.getCourses();
+			if (!courses.length) {
+				this.renderEmptyState();
+				return;
+			}
+			this.createTree();
+		} catch (error) {
+			console.error('[StudentAssignments] Failed to load courses:', error);
+			// If we get a 401, the token might be invalid
+			if ((error).status === 401) {
+				console.log('[StudentAssignments] Got 401, attempting token refresh...');
+				const refreshed = await this.authService.refreshAccessToken();
+				if (refreshed) {
+					// Retry loading courses
+					await this.initialize();
+				} else {
+					// Refresh failed, show login
+					this.renderSignInPrompt();
+				}
+			} else {
+				// Other error, show empty state with error message
+				this.renderErrorState(error);
+			}
 		}
-		this.createTree();
 	}
 
 	private createTree(): void {
@@ -279,6 +319,9 @@ export class StudentAssignmentsView extends ViewPane {
 	}
 
 	private renderSignInPrompt(): void {
+		// Clear existing content
+		this.bodyContainer.innerHTML = '';
+
 		const wrapper = append(this.bodyContainer, $('.student-auth-required'));
 		const message = append(wrapper, $('.student-auth-message'));
 		message.textContent = localize('studentAuthRequiredCourses', "Sign in to your school account to view your courses.");
@@ -286,17 +329,47 @@ export class StudentAssignmentsView extends ViewPane {
 		button.textContent = localize('studentAuthSignInButton', "Sign In");
 		button.addEventListener('click', async () => {
 			await this.commandService.executeCommand('student.signIn');
-			const authed = await hasStoredStudentAuth(this.secretStorageService);
-			if (authed) {
-				this.bodyContainer.innerHTML = '';
-				this.createTree();
-			}
+			// No need to manually check - the auth state change listener will handle it
 		});
 	}
 
 	private renderEmptyState(): void {
+		// Clear existing content
+		this.bodyContainer.innerHTML = '';
+
 		const wrapper = append(this.bodyContainer, $('.empty-state'));
 		wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	}
+
+	private renderErrorState(error: unknown): void {
+		// Clear existing content
+		this.bodyContainer.innerHTML = '';
+
+		const wrapper = append(this.bodyContainer, $('.error-state'));
+		const message = append(wrapper, $('.error-message'));
+		message.textContent = localize('studentAssignmentsError', "Failed to load courses. Please try again.");
+
+		const errorDetails = append(wrapper, $('.error-details'));
+		const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+		errorDetails.textContent = errorMessage;
+
+		const button = append(wrapper, $('button.retry-button')) as HTMLButtonElement;
+		button.textContent = localize('studentAssignmentsRetry', "Retry");
+		button.addEventListener('click', () => {
+			this.refreshView();
+		});
+	}
+
+	private showLoginPrompt(): void {
+		// Clear existing content and show login prompt
+		this.bodyContainer.innerHTML = '';
+		this.renderSignInPrompt();
+	}
+
+	private async refreshView(): Promise<void> {
+		console.log('[StudentAssignments] Refreshing view...');
+		this.bodyContainer.innerHTML = '';
+		await this.initialize();
 	}
 
 	protected override layoutBody(height: number, width: number): void {
@@ -314,7 +387,7 @@ export class StudentAssignmentsView extends ViewPane {
 	}
 
 	private openCourse(course: ICourse): void {
-		console.log(`OPEN COURSE - ${course.name}`);
+		console.log(`[StudentAssignments] Opening course: ${course.name}`);
 
 		const input = new CourseDetailInput(course);
 		this.editorService.openEditor(input, { pinned: true });

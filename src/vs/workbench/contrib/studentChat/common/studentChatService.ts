@@ -10,8 +10,7 @@ import { ApiClient, IApiResponse } from './apiClients.js';
 import { AdaptRequest, AssignmentDetails } from './types.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { ensureStudentAuth, refreshStudentAuth } from '../common/studentAuth.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IStudentAuthService, AuthState, STUDENT_AUTH_STUDENT_ID_KEY } from '../../studentAuthentication/common/studentAuth.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 
 export interface IStudentAssignment extends AssignmentDetails { }
@@ -88,8 +87,8 @@ export class StudentService extends Disposable implements IStudentService {
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ICommandService private readonly commandService: ICommandService,
-		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
+		@IStudentAuthService private readonly authService: IStudentAuthService,
 	) {
 		super();
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
@@ -103,10 +102,10 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 
 		try {
-			// ensure we have a valid API client with authentication
-			await this.ensureApiClient();
-
-			this._currentAssignments = await this._fetchAssignmentsSafe();
+			// Ensure we have a valid API client with authentication
+			if (await this.ensureAuthenticated()) {
+				this._currentAssignments = await this._fetchAssignmentsSafe();
+			}
 		} catch (error) {
 			console.error('Failed to initialize StudentService:', error);
 			return;
@@ -116,24 +115,41 @@ export class StudentService extends Disposable implements IStudentService {
 	}
 
 	private async _withAuthRetry<T>(operation: () => Promise<IApiResponse<T>>): Promise<IApiResponse<T>> {
+		// Ensure we have a token before the first attempt
+		await this.ensureAuthenticated();
 		let response = await operation();
 		if (!response.success && response.status === 401) {
-			const refreshed = await refreshStudentAuth(this.commandService, this._apiClient, this.secretStorageService);
-			if (refreshed?.authToken) {
+			const refreshed = await this.authService.refreshAccessToken();
+			if (refreshed && await this.ensureAuthenticated()) {
 				response = await operation();
 			}
 		}
 		return response;
 	}
 
-	private async ensureApiClient(): Promise<ApiClient | undefined> {
-		// Ensure the student is authenticated (prompts once; backend manages session/token).
-		const result = await ensureStudentAuth(this.quickInputService, this.commandService, this._apiClient, this.secretStorageService);
-		if (!result) {
-			return;
+	private async ensureAuthenticated(): Promise<boolean> {
+		// Wait for auth service to be ready
+		await this.authService.whenReady();
+
+		if (this.authService.state !== AuthState.Authenticated) {
+			console.warn('StudentService: Not authenticated');
+			return false;
 		}
-		this._studentId = result.studentId ?? this._studentId;
-		return this._apiClient;
+
+		const token = await this.authService.getValidAccessToken();
+		if (!token) {
+			console.warn('StudentService: No valid access token');
+			return false;
+		}
+
+		this._apiClient.setAuthToken(token);
+
+		// Try to load the student id from storage if we don't have it yet
+		if (!this._studentId) {
+			this._studentId = await this.secretStorageService.get(STUDENT_AUTH_STUDENT_ID_KEY) ?? this._studentId;
+		}
+
+		return true;
 	}
 
 	async preloadStudentContext(): Promise<void> {
@@ -142,8 +158,11 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 
 		this.preloadPromise = (async () => {
-			// ensure there is an authicated client; the stored aith will be reused if present
-			await this.ensureApiClient();
+			// Ensure there is an authenticated client; stored auth will be reused if present
+			const authed = await this.ensureAuthenticated();
+			if (!authed) {
+				return;
+			}
 
 			// warm up core data in parallel
 			await Promise.allSettled([
