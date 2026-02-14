@@ -6,11 +6,11 @@
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { ApiClient } from './apiClients.js';
+import { ApiClient, IApiResponse } from './apiClients.js';
 import { AdaptRequest, AssignmentDetails } from './types.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { ensureStudentAuth } from '../common/studentAuth.js';
+import { ensureStudentAuth, refreshStudentAuth } from '../common/studentAuth.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 
@@ -30,6 +30,9 @@ export interface IStudentService {
 	// Events
 	readonly onAssignmentsUpdate: Event<IStudentAssignment[]>;
 	readonly onChatMessage: Event<IChatMessage>;
+
+	// Preload Student Context
+	preloadStudentContext(): Promise<void>;
 
 	// Assignment methods
 	getAssignments(): Promise<IStudentAssignment[]>;
@@ -59,6 +62,7 @@ export class StudentService extends Disposable implements IStudentService {
 
 	private _apiClient: ApiClient;
 	private _initialized = false;
+	private preloadPromise: Promise<void> | null = null;
 	private _studentId: string | undefined;
 	private _currentAssignments: IStudentAssignment[] = [];
 	private _currentAssignmentId: string | undefined;
@@ -111,6 +115,17 @@ export class StudentService extends Disposable implements IStudentService {
 		this._initialized = true;
 	}
 
+	private async _withAuthRetry<T>(operation: () => Promise<IApiResponse<T>>): Promise<IApiResponse<T>> {
+		let response = await operation();
+		if (!response.success && response.status === 401) {
+			const refreshed = await refreshStudentAuth(this.commandService, this._apiClient, this.secretStorageService);
+			if (refreshed?.authToken) {
+				response = await operation();
+			}
+		}
+		return response;
+	}
+
 	private async ensureApiClient(): Promise<ApiClient | undefined> {
 		// Ensure the student is authenticated (prompts once; backend manages session/token).
 		const result = await ensureStudentAuth(this.quickInputService, this.commandService, this._apiClient, this.secretStorageService);
@@ -121,9 +136,32 @@ export class StudentService extends Disposable implements IStudentService {
 		return this._apiClient;
 	}
 
+	async preloadStudentContext(): Promise<void> {
+		if (this.preloadPromise) {
+			return this.preloadPromise;
+		}
+
+		this.preloadPromise = (async () => {
+			// ensure there is an authicated client; the stored aith will be reused if present
+			await this.ensureApiClient();
+
+			// warm up core data in parallel
+			await Promise.allSettled([
+				this.getAssignments(),
+				// this.getChatHistory()
+			]);
+		})();
+
+		try {
+			await this.preloadPromise;
+		} finally {
+			this.preloadPromise = null;
+		}
+	}
+
 	private async _fetchAssignmentsSafe(): Promise<IStudentAssignment[]> {
 		try {
-			const response = await this._apiClient.get<AssignmentDetails[]>('/student/assignments');
+			const response = await this._withAuthRetry(() => this._apiClient.get<AssignmentDetails[]>('/student/assignments'));
 			return this._normalizeAssignmentsResponse(response.data);
 		} catch (error) {
 			console.error('Failed to fetch student assignments:', error);
@@ -134,7 +172,7 @@ export class StudentService extends Disposable implements IStudentService {
 	async getAssignments(): Promise<IStudentAssignment[]> {
 		await this._ensureInitialized();
 		try {
-			const response = await this._apiClient.get<AssignmentDetails[]>('/student/assignments');
+			const response = await this._withAuthRetry(() => this._apiClient.get<AssignmentDetails[]>('/student/assignments'));
 			this._currentAssignments = this._normalizeAssignmentsResponse(response.data);
 			return this._currentAssignments;
 		} catch (error) {
@@ -153,7 +191,7 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 
 		try {
-			const response = await this._apiClient.get<AssignmentDetails>(`/student/assignments/${assignmentId}`);
+			const response = await this._withAuthRetry(() => this._apiClient.get<AssignmentDetails>(`/student/assignments/${assignmentId}`));
 			const detailed = response.data;
 			this._fetchedAssignmentDetails.add(detailed.assignment_id);
 			const index = this._currentAssignments.findIndex(a => a.assignment_id === detailed.assignment_id);
@@ -185,7 +223,7 @@ export class StudentService extends Disposable implements IStudentService {
 				}))
 			};
 			console.log('Submitting assignment payload:', payload);
-			await this._apiClient.post<void>('/student/assignments/submit-assignment', payload);
+			await this._withAuthRetry(() => this._apiClient.post<void>('/student/assignments/submit-assignment', payload));
 		} catch (error) {
 			console.error('Failed to submit assignment:', error);
 			throw error;
@@ -200,7 +238,7 @@ export class StudentService extends Disposable implements IStudentService {
 				assignment_id: assignmentId,
 				reflection_text: text ?? ''
 			};
-			await this._apiClient.post<void>('/student/reflections', payload);
+			await this._withAuthRetry(() => this._apiClient.post<void>('/student/reflections', payload));
 		} catch (error) {
 			console.error('Failed to submit reflection:', error);
 			throw error;
@@ -236,7 +274,7 @@ export class StudentService extends Disposable implements IStudentService {
 				assignment_id: this._currentAssignmentId ?? null,
 			};
 
-			const response = await this._apiClient.adapt(payload);
+			const response = await this._withAuthRetry(() => this._apiClient.adapt(payload));
 			const aiText = response.data.ai_response ?? 'Sorry, no reply available.';
 
 			const aiMessage: IChatMessage = {

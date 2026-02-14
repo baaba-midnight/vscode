@@ -5,6 +5,7 @@
 
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { append, $, addDisposableListener } from '../../../../base/browser/dom.js';
+import * as DOM from '../../../../base/browser/dom.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -24,6 +25,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { hasStoredStudentAuth } from '../common/studentAuth.js';
 import { localize } from '../../../../nls.js';
+import { toDisposable } from '../../../../base/common/lifecycle.js';
 
 export class StudentChatPanel extends ViewPane {
 	private _chatContainer!: HTMLElement;
@@ -36,6 +38,7 @@ export class StudentChatPanel extends ViewPane {
 	private _assignmentHeader!: HTMLElement;
 	private _assignmentSelect!: HTMLSelectElement;
 	private _assignments: IStudentAssignment[] = [];
+	private _authPollInterval: number | undefined;
 
 	private readonly _onMessageSent = this._register(new Emitter<string>());
 	readonly onMessageSent: Event<string> = this._onMessageSent.event;
@@ -123,6 +126,7 @@ export class StudentChatPanel extends ViewPane {
 		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
 		if (!isAuthed) {
 			this._renderSignInPrompt();
+			this._startAuthWatcher();
 			return;
 		}
 
@@ -269,14 +273,41 @@ export class StudentChatPanel extends ViewPane {
 		button.textContent = localize('studentAuthSignInButton', "Sign In");
 		this._register(addDisposableListener(button, 'click', async () => {
 			await this.commandService.executeCommand('student.signIn');
+		}));
+
+		this._startAuthWatcher();
+	}
+
+	private _startAuthWatcher(): void {
+		if (this._authPollInterval !== undefined) {
+			return;
+		}
+
+		const targetWindow = this._chatContainer.ownerDocument.defaultView ?? DOM.getActiveWindow();
+		this._authPollInterval = targetWindow.setInterval(async () => {
 			const authed = await hasStoredStudentAuth(this.secretStorageService);
-			if (authed) {
-				while (this._chatContainer.firstChild) {
-					this._chatContainer.removeChild(this._chatContainer.firstChild);
-				}
-				this._createLayout();
-				await this._loadAssignmentsForSelector();
-				await this._loadChatHistory();
+			if (!authed) {
+				return;
+			}
+
+			if (this._authPollInterval !== undefined) {
+				targetWindow.clearInterval(this._authPollInterval);
+				this._authPollInterval = undefined;
+			}
+
+			while (this._chatContainer.firstChild) {
+				this._chatContainer.removeChild(this._chatContainer.firstChild);
+			}
+			this._createLayout();
+			await this._loadAssignmentsForSelector();
+			await this._loadChatHistory();
+		}, 1000);
+
+		this._register(toDisposable(() => {
+			if (this._authPollInterval !== undefined) {
+				const disposeWindow = this._chatContainer.ownerDocument.defaultView ?? DOM.getActiveWindow();
+				disposeWindow.clearInterval(this._authPollInterval);
+				this._authPollInterval = undefined;
 			}
 		}));
 	}

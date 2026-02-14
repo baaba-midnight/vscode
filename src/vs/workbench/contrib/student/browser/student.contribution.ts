@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import './media/student.css';
+
 import { localize2 } from '../../../../nls.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
@@ -13,12 +15,13 @@ import { IStudentService, StudentService } from '../common/studentService.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { ApiClient } from '../common/apiClients.js';
-import { loginStudent } from '../common/studentAuth.js';
+import { loginStudent, STUDENT_AUTH_TOKEN_KEY, STUDENT_AUTH_STUDENT_ID_KEY, STUDENT_AUTH_REFRESH_TOKEN_KEY, hasStoredStudentAuth } from '../common/studentAuth.js';
 import { MenuRegistry, MenuId } from '../../../../platform/actions/common/actions.js';
-import './media/student.css';
+import { showStudentLoginOverlay } from './studentLoginOverlay.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 
 console.log('[Student] Registering student service and UI contributions');
 
@@ -28,33 +31,72 @@ registerSingleton(IStudentService, StudentService, InstantiationType.Delayed);
 // Commands for explicit sign-in / sign-out
 export const STUDENT_SIGN_IN_COMMAND_ID = 'student.signIn';
 export const STUDENT_SIGN_OUT_COMMAND_ID = 'student.signOut';
+export const STUDENT_PERFORM_LOGIN_COMMAND_ID = 'studentLogin.performLogin';
 
 CommandsRegistry.registerCommand(STUDENT_SIGN_IN_COMMAND_ID, async accessor => {
-	const quickInputService = accessor.get(IQuickInputService);
+	const commandService = accessor.get(ICommandService);
+	const contextViewService = accessor.get(IContextViewService);
+	showStudentLoginOverlay(commandService, contextViewService);
+});
+
+CommandsRegistry.registerCommand(STUDENT_PERFORM_LOGIN_COMMAND_ID, async (accessor, args: { email: string; password: string }) => {
 	const commandService = accessor.get(ICommandService);
 	const secretStorageService = accessor.get(ISecretStorageService);
+	const studentService = accessor.get(IStudentService);
+
+	const email = args?.email ?? '';
+	const password = args?.password ?? '';
+
 	const apiClient = new ApiClient(commandService);
 
-	const authContext = await loginStudent(commandService, apiClient, await quickInputService.input({
-		prompt: 'Student email',
-		placeHolder: 'student@example.com'
-	}) || '', await quickInputService.input({
-		prompt: 'Password',
-		password: true
-	}) || '');
+	const authContext = await loginStudent(commandService, apiClient, email, password);
+
+	// Store auth context in secret storage
 	if (authContext.authToken) {
-		await secretStorageService.set('student.ide.authToken', authContext.authToken);
+		await secretStorageService.set(STUDENT_AUTH_TOKEN_KEY, authContext.authToken);
+	}
+	if (authContext.refreshToken) {
+		await secretStorageService.set(STUDENT_AUTH_REFRESH_TOKEN_KEY, authContext.refreshToken);
 	}
 	if (authContext.studentId) {
-		await secretStorageService.set('student.ide.studentId', authContext.studentId);
+		await secretStorageService.set(STUDENT_AUTH_STUDENT_ID_KEY, authContext.studentId);
 	}
+
+	// preload student data so views are instant
+	try {
+		await studentService.preloadStudentContext();
+	} catch (error) {
+		console.log('[Student] Failed to preload student context after login', error);
+	}
+
+	return authContext;
 });
 
 CommandsRegistry.registerCommand(STUDENT_SIGN_OUT_COMMAND_ID, async accessor => {
 	const secretStorageService = accessor.get(ISecretStorageService);
-	await secretStorageService.delete('student.ide.authToken');
-	await secretStorageService.delete('student.ide.studentId');
+	await secretStorageService.delete(STUDENT_AUTH_TOKEN_KEY);
+	await secretStorageService.delete(STUDENT_AUTH_STUDENT_ID_KEY);
+	await secretStorageService.delete(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 });
+
+class StudentAuthStartupContribution implements IWorkbenchContribution {
+
+	constructor(
+		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
+		@ICommandService private readonly commandService: ICommandService
+	) {
+		this.init();
+	}
+
+	private async init(): Promise<void> {
+		const hasAuth = await hasStoredStudentAuth(this.secretStorageService);
+		if (!hasAuth) {
+			await this.commandService.executeCommand(STUDENT_SIGN_IN_COMMAND_ID);
+		}
+	}
+}
+
+registerWorkbenchContribution2('workbench.contributions.studentAuthStartup', StudentAuthStartupContribution, WorkbenchPhase.AfterRestored);
 
 // Surface commands in the Command Palette
 MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
