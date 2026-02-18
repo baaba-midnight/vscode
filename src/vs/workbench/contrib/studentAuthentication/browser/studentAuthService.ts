@@ -216,7 +216,7 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		try {
 			// Optionally call backend logout endpoint
 			if (this._accessToken) {
-				await this.apiClient.post('/auth/logout', {});
+				await this.apiClient.post('/users/logout', {});
 			}
 		} catch (error) {
 			console.warn('[StudentAuth] Logout API call failed:', error);

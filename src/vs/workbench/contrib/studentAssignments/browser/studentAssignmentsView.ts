@@ -22,7 +22,9 @@ import { IKeybindingService } from '../../../../platform/keybinding/common/keybi
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { append, $ } from '../../../../base/browser/dom.js';
+import { append, $, clearNode, getContentHeight, getContentWidth, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { WorkbenchAsyncDataTree } from '../../../../platform/list/browser/listService.js';
 import { IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { IAsyncDataSource, ITreeNode, ITreeRenderer } from '../../../../base/browser/ui/tree/tree.js';
@@ -197,6 +199,9 @@ export class StudentAssignmentsView extends ViewPane {
 
 	private tree!: WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>;
 	private bodyContainer!: HTMLElement;
+	private treeCreationPending = false;
+	private _lastLayoutHeight = 0;
+	private _lastLayoutWidth = 0;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -211,7 +216,7 @@ export class StudentAssignmentsView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
 		@IEditorService private readonly editorService: IEditorService,
-		@ICommandService private readonly commandService: ICommandService,
+		@ICommandService _commandService: ICommandService,
 		@IStudentAuthService private readonly authService: IStudentAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
@@ -227,6 +232,20 @@ export class StudentAssignmentsView extends ViewPane {
 				this.showLoginPrompt();
 			}
 		}));
+
+		// React to course data changes so the view updates as soon as
+		// courses are fetched, even if that happens after the initial
+		// render.
+		this._register(this.assignmentsService.onDidChangeCourses(() => {
+			if (this.tree) {
+				this.tree.updateChildren();
+			} else if (this.bodyContainer) {
+				this.createTree();
+			} else {
+				// bodyContainer not set yet, defer tree creation
+				this.treeCreationPending = true;
+			}
+		}));
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -234,6 +253,11 @@ export class StudentAssignmentsView extends ViewPane {
 		container.classList.add('student-assignments-view');
 		this.bodyContainer = append(container, $('.student-assignments-root'));
 		void this.initialize();
+		// If tree creation was deferred because bodyContainer wasn't set, do it now
+		if (this.treeCreationPending) {
+			this.treeCreationPending = false;
+			this.createTree();
+		}
 	}
 
 	private async initialize(): Promise<void> {
@@ -251,35 +275,21 @@ export class StudentAssignmentsView extends ViewPane {
 
 		console.log('[StudentAssignments] Authenticated, loading courses...');
 
+		// Show a lightweight loading state while courses are being fetched
+		this.renderLoadingState();
+
 		// Load courses
-		try {
-			const courses = await this.assignmentsService.getCourses();
-			if (!courses.length) {
-				this.renderEmptyState();
-				return;
-			}
+		const courses = await this.assignmentsService.getCourses();
+
+		// Only create the tree if bodyContainer is set
+		if (courses.length > 0 && !this.tree && this.bodyContainer) {
 			this.createTree();
-		} catch (error) {
-			console.error('[StudentAssignments] Failed to load courses:', error);
-			// If we get a 401, the token might be invalid
-			if ((error).status === 401) {
-				console.log('[StudentAssignments] Got 401, attempting token refresh...');
-				const refreshed = await this.authService.refreshAccessToken();
-				if (refreshed) {
-					// Retry loading courses
-					await this.initialize();
-				} else {
-					// Refresh failed, show login
-					this.renderSignInPrompt();
-				}
-			} else {
-				// Other error, show empty state with error message
-				this.renderErrorState(error);
-			}
 		}
 	}
 
 	private createTree(): void {
+		// Clear any previous state (e.g., loading or empty messages)
+		clearNode(this.bodyContainer);
 		const treeContainer = append(this.bodyContainer, $('.student-assignments-tree'));
 		this.tree = this._register(this.instantiationService.createInstance(
 			WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>,
@@ -306,9 +316,22 @@ export class StudentAssignmentsView extends ViewPane {
 
 		this.tree.setInput('root');
 
-		this._register(this.assignmentsService.onDidChangeCourses(() => {
-			this.tree.updateChildren();
-		}));
+		// Tree is created asynchronously after data loads; layoutBody may have already run.
+		// Apply stored dimensions so the tree renders immediately without toggling the view.
+		if (this._lastLayoutHeight > 0 && this._lastLayoutWidth > 0) {
+			this.tree.layout(this._lastLayoutHeight, this._lastLayoutWidth);
+		} else {
+			// Fallback: layout hasn't run yet (e.g. view was hidden). Schedule layout on next frame.
+			this._register(scheduleAtNextAnimationFrame(getWindow(this.bodyContainer), () => {
+				if (this.tree) {
+					const h = getContentHeight(this.bodyContainer);
+					const w = getContentWidth(this.bodyContainer);
+					if (h > 0 && w > 0) {
+						this.tree.layout(h, w);
+					}
+				}
+			}));
+		}
 
 		this._register(this.tree.onDidOpen(e => {
 			const element = e.element;
@@ -320,60 +343,67 @@ export class StudentAssignmentsView extends ViewPane {
 
 	private renderSignInPrompt(): void {
 		// Clear existing content
-		this.bodyContainer.innerHTML = '';
+		clearNode(this.bodyContainer);
 
-		const wrapper = append(this.bodyContainer, $('.student-auth-required'));
+		const wrapper = append(this.bodyContainer, $('.student-auth-required.empty-state-signed-out'));
+		append(wrapper, $('span.empty-state-icon' + ThemeIcon.asCSSSelector(Codicon.book)));
 		const message = append(wrapper, $('.student-auth-message'));
 		message.textContent = localize('studentAuthRequiredCourses', "Sign in to your school account to view your courses.");
-		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
-		button.textContent = localize('studentAuthSignInButton', "Sign In");
-		button.addEventListener('click', async () => {
-			await this.commandService.executeCommand('student.signIn');
-			// No need to manually check - the auth state change listener will handle it
-		});
+		const hint = append(wrapper, $('.student-auth-hint'));
+		hint.textContent = localize('studentAuthHint', "Not signed in yet");
 	}
 
-	private renderEmptyState(): void {
-		// Clear existing content
-		this.bodyContainer.innerHTML = '';
+	// private renderEmptyState(): void {
+	// 	// Clear existing content
+	// 	clearNode(this.bodyContainer);
 
-		const wrapper = append(this.bodyContainer, $('.empty-state'));
-		wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	// 	const wrapper = append(this.bodyContainer, $('.empty-state'));
+	// 	wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	// }
+
+	private renderLoadingState(): void {
+		// Clear existing content and show a simple loading indicator
+		clearNode(this.bodyContainer);
+
+		const wrapper = append(this.bodyContainer, $('.loading-state'));
+		wrapper.textContent = localize('studentAssignmentsLoadingCourses', "Loading your courses...");
 	}
 
-	private renderErrorState(error: unknown): void {
-		// Clear existing content
-		this.bodyContainer.innerHTML = '';
+	// private renderErrorState(error: unknown): void {
+	// 	// Clear existing content
+	// 	clearNode(this.bodyContainer);
 
-		const wrapper = append(this.bodyContainer, $('.error-state'));
-		const message = append(wrapper, $('.error-message'));
-		message.textContent = localize('studentAssignmentsError', "Failed to load courses. Please try again.");
+	// 	const wrapper = append(this.bodyContainer, $('.error-state'));
+	// 	const message = append(wrapper, $('.error-message'));
+	// 	message.textContent = localize('studentAssignmentsError', "Failed to load courses. Please try again.");
 
-		const errorDetails = append(wrapper, $('.error-details'));
-		const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
-		errorDetails.textContent = errorMessage;
+	// 	const errorDetails = append(wrapper, $('.error-details'));
+	// 	const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+	// 	errorDetails.textContent = errorMessage;
 
-		const button = append(wrapper, $('button.retry-button')) as HTMLButtonElement;
-		button.textContent = localize('studentAssignmentsRetry', "Retry");
-		button.addEventListener('click', () => {
-			this.refreshView();
-		});
-	}
+	// 	const button = append(wrapper, $('button.retry-button')) as HTMLButtonElement;
+	// 	button.textContent = localize('studentAssignmentsRetry', "Retry");
+	// 	button.addEventListener('click', () => {
+	// 		this.refreshView();
+	// 	});
+	// }
 
 	private showLoginPrompt(): void {
 		// Clear existing content and show login prompt
-		this.bodyContainer.innerHTML = '';
+		clearNode(this.bodyContainer);
 		this.renderSignInPrompt();
 	}
 
 	private async refreshView(): Promise<void> {
 		console.log('[StudentAssignments] Refreshing view...');
-		this.bodyContainer.innerHTML = '';
+		clearNode(this.bodyContainer);
 		await this.initialize();
 	}
 
 	protected override layoutBody(height: number, width: number): void {
 		super.layoutBody(height, width);
+		this._lastLayoutHeight = height;
+		this._lastLayoutWidth = width;
 		if (this.tree) {
 			this.tree.layout(height, width);
 		}

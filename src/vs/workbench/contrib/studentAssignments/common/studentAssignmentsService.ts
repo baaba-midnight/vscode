@@ -89,7 +89,7 @@ export interface ISubmission {
 interface ISubmissionResponseFile {
 	filename: string;
 	mime_type: string;
-	url: string;
+	download_url: string;
 }
 
 interface ISubmissionResponse {
@@ -159,6 +159,11 @@ export interface IStudentAssignmentsService {
 	openAssignmentFolder(assignmentId: string): Promise<void>;
 
 	/**
+	 * Open an assignment as a single-folder workspace in a new window
+	 */
+	openAssignmentWorkspace(assignmentId: string): Promise<void>;
+
+	/**
 	 * Open course files folder
 	 */
 	openCourseFolder(courseId: string): Promise<void>;
@@ -199,7 +204,27 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
 		this.apiClient = new ApiClient(this.commandService, baseURL);
 
+		// Clear cache when user logs out so next login fetches fresh data
+		authService.onDidAuthStateChange(state => {
+			if (state === AuthState.Unauthenticated) {
+				this.clearCache();
+			}
+		});
+
 		console.log('[StudentAssignmentsService] Service initialized');
+	}
+
+	/**
+	 * Clear courses and assignments cache. Called on logout so next login fetches fresh data.
+	 */
+	clearCache(): void {
+		const hadData = this.courses.length > 0 || this.assignments.size > 0;
+		this.courses = [];
+		this.assignments.clear();
+		if (hadData) {
+			this._onDidChangeCourses.fire();
+			console.log('[StudentAssignmentsService] Cache cleared on logout');
+		}
 	}
 
 	/**
@@ -411,14 +436,40 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 			if (folderUri) {
 				try {
-					await this.commandService.executeCommand('revealFileInOS', folderUri);
-				} catch (error) {
-					console.error('[StudentAssignmentsService] Failed to reveal in OS, falling back to explorer', error);
 					await this.commandService.executeCommand('revealInExplorer', folderUri);
+				} catch (error) {
+					// Fallback to OS file explorer if Explorer reveal fails
+					await this.commandService.executeCommand('revealFileInOS', folderUri);
 				}
 			}
 		} catch (error) {
 			console.error('[StudentAssignmentsService] Failed to open assignment folder', error);
+		}
+	}
+
+	async openAssignmentWorkspace(assignmentId: string): Promise<void> {
+		console.log(`[StudentAssignmentsService] Opening workspace for assignment ${assignmentId}`);
+
+		if (!await this.ensureAuthenticated()) {
+			return;
+		}
+
+		const assignment = await this.getAssignment(assignmentId);
+		if (!assignment) {
+			return;
+		}
+
+		try {
+			const folderUri = await this.downloadAssignmentFiles(assignment);
+			if (!folderUri) {
+				return;
+			}
+
+			// Open the assignment folder in a new window via command.
+			// This avoids importing browser-specific host services from the common layer.
+			await this.commandService.executeCommand('vscode.openFolder', folderUri, { forceNewWindow: true });
+		} catch (error) {
+			console.error('[StudentAssignmentsService] Failed to open assignment workspace', error);
 		}
 	}
 
@@ -461,9 +512,11 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	private async fetchCourses(): Promise<void> {
 		try {
 			const response = await this.apiClient.get<CourseResponse[]>('/student/courses');
+
 			if (response.success && response.data) {
 				this.courses = response.data.map(course => this.toCourse(course));
 				console.log(`[StudentAssignmentsService] Fetched ${this.courses.length} courses`);
+				this._onDidChangeCourses.fire();
 			}
 		} catch (error) {
 			console.error('[StudentAssignmentsService] Failed to fetch courses', error);
@@ -583,7 +636,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			files: Array.isArray(submission.files) ? submission.files.map(file => ({
 				filename: String(file.filename),
 				mimeType: String(file.mime_type),
-				url: String(file.url)
+				url: String(file.download_url)
 			})) : []
 		};
 	}
@@ -648,6 +701,13 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			}
 
 			const targetUri = joinPath(folderUri, this.sanitizeName(file.name));
+
+			// do not overwrite student's existing work when continuing an assigment
+			if (await this.fileService.exists(targetUri)) {
+				console.log(`[StudentAssignmentsService] File already exists, skipping download: ${file.name}`);
+				continue;
+			}
+
 			try {
 				const context = await this.requestService.request({ url: file.downloadUrl, type: 'GET' }, CancellationToken.None);
 				const buffer = await streamToBuffer(context.stream);

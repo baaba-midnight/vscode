@@ -3,24 +3,27 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+// Alias for assignment details
+export type IStudentAssignment = import('./types.js').AssignmentDetails;
+
+import { ChatMessage, AssignmentDetails, AdaptRequest } from './types.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ApiClient, IApiResponse } from './apiClients.js';
-import { AdaptRequest, AssignmentDetails } from './types.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IStudentAuthService, AuthState, STUDENT_AUTH_STUDENT_ID_KEY } from '../../studentAuthentication/common/studentAuth.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 
-export interface IStudentAssignment extends AssignmentDetails { }
-
+// Local definition for IChatMessage (frontend type)
 export interface IChatMessage {
 	id: string;
 	content: string;
 	isUser: boolean;
 	timestamp: Date;
 	metadata?: Record<string, string | number | boolean>;
+	sender_type?: 'student' | 'system';
 }
 
 export interface IStudentService {
@@ -51,6 +54,20 @@ export interface IStudentService {
 }
 
 export class StudentService extends Disposable implements IStudentService {
+
+	/**
+	 * Convert a backend ChatMessage to a frontend IChatMessage.
+	 */
+	private _toIChatMessage(msg: ChatMessage): IChatMessage {
+		return {
+			id: msg.chat_id,
+			content: msg.message_text,
+			isUser: msg.sender_type === 'student',
+			timestamp: new Date(msg.created_at),
+			metadata: {},
+			sender_type: msg.sender_type === 'student' ? 'student' : 'system',
+		};
+	}
 	declare readonly _serviceBrand: undefined;
 
 	private readonly _onAssignmentsUpdate = this._register(new Emitter<IStudentAssignment[]>());
@@ -94,6 +111,26 @@ export class StudentService extends Disposable implements IStudentService {
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
 		this._apiClient = new ApiClient(this.commandService, baseURL);
 		// Don't initialize immediately - let it happen lazily
+
+		// Clear cache when user logs out so next login fetches fresh data
+		this._register(authService.onDidAuthStateChange(state => {
+			if (state === AuthState.Unauthenticated) {
+				this.clearCache();
+			}
+		}));
+	}
+
+	/**
+	 * Clear assignments and chat cache. Called on logout so next login fetches fresh data.
+	 */
+	private clearCache(): void {
+		this._initialized = false;
+		this.preloadPromise = null;
+		this._currentAssignments = [];
+		this._currentAssignmentId = undefined;
+		this._chatHistory = [];
+		this._fetchedAssignmentDetails.clear();
+		this._studentId = undefined;
 	}
 
 	private async _ensureInitialized(): Promise<void> {
@@ -326,7 +363,19 @@ export class StudentService extends Disposable implements IStudentService {
 
 	async getChatHistory(): Promise<IChatMessage[]> {
 		await this._ensureInitialized();
-		return [...this._chatHistory];
+		try {
+			// Fetch from backend route
+			const response = await this._withAuthRetry(() => this._apiClient.get<ChatMessage[]>(`/chat/${this._currentAssignmentId}`));
+			if (response.success && Array.isArray(response.data)) {
+				this._chatHistory = response.data.map(msg => this._toIChatMessage(msg));
+				return [...this._chatHistory];
+			} else {
+				return [...this._chatHistory];
+			}
+		} catch (error) {
+			console.error('Failed to fetch chat history from backend:', error);
+			return [...this._chatHistory];
+		}
 	}
 
 	async clearChatHistory(): Promise<void> {

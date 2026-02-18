@@ -4,25 +4,73 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';
-import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
-import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
-// import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
-import { MenuRegistry, MenuId } from '../../../../platform/actions/common/actions.js';
-import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { runWhenGlobalIdle } from '../../../../base/common/async.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
-import { showStudentLoginOverlay } from './studentLoginOverlay.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IStudentAuthService, AuthState } from '../common/studentAuth.js';
+import { showStudentLoginOverlay } from './studentLoginOverlay.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+
+import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { MenuRegistry, MenuId } from '../../../../platform/actions/common/actions.js';
 import { StudentAuthService } from './studentAuthService.js';
-
-console.log('[StudentAuth] Registering authentication service and contributions');
-
-// Register Student Auth Service as a singleton
-registerSingleton(IStudentAuthService, StudentAuthService, InstantiationType.Eager);
 
 // Commands for sign-in / sign-out
 export const STUDENT_SIGN_IN_COMMAND_ID = 'student.signIn';
 export const STUDENT_SIGN_OUT_COMMAND_ID = 'student.signOut';
 export const STUDENT_PERFORM_LOGIN_COMMAND_ID = 'studentLogin.performLogin';
+
+/**
+ * Workbench contribution that handles authentication at startup.
+ * This runs early in the workbench lifecycle to ensure authentication
+ * is resolved before features try to load.
+ */
+class StudentAuthStartupContribution implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.studentAuthStartup';
+
+	constructor(
+		@IStudentAuthService private readonly authService: IStudentAuthService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IContextKeyService private readonly contextkeyService: IContextKeyService
+	) {
+		this.initialize();
+	}
+
+	private async initialize(): Promise<void> {
+		// Wait for auth service to first initialize
+		await this.authService.whenReady();
+
+		// set context key for auth state
+		this.updateAuthContext(this.authService.state);
+
+		// Listen for auth state changes
+		this.authService.onDidAuthStateChange(state => {
+			this.updateAuthContext(state);
+		});
+
+		// if unauthenticated, show login after the workbench has painted
+		if (this.authService.state === AuthState.Unauthenticated) {
+			runWhenGlobalIdle(() => {
+				this.commandService.executeCommand(STUDENT_SIGN_IN_COMMAND_ID);
+			}, 100);
+		}
+	}
+
+	private updateAuthContext(state: AuthState): void {
+		const isAuthenticated = state === AuthState.Authenticated;
+		this.contextkeyService.createKey('studentAuthenticated', isAuthenticated);
+	}
+}
+
+// Register the startup contribution to run before the workbench is fully restored
+// This ensures auth is resolved early in the boot process
+registerWorkbenchContribution2(
+	StudentAuthStartupContribution.ID,
+	StudentAuthStartupContribution,
+	WorkbenchPhase.AfterRestored
+);
 
 /**
  * Command to show the login overlay
@@ -63,55 +111,10 @@ CommandsRegistry.registerCommand(STUDENT_SIGN_OUT_COMMAND_ID, async accessor => 
 	console.log('[StudentAuth] Logout complete');
 });
 
-/**
- * Workbench contribution that handles authentication at startup.
- * This runs early in the workbench lifecycle to ensure authentication
- * is resolved before features try to load.
- */
-class StudentAuthStartupContribution implements IWorkbenchContribution {
+console.log('[StudentAuth] Registering authentication service and contributions');
 
-	static readonly ID = 'workbench.contrib.studentAuthStartup';
-
-	constructor(
-		@IStudentAuthService private readonly authService: IStudentAuthService,
-		@ICommandService private readonly commandService: ICommandService
-	) {
-		this.init();
-	}
-
-	private async init(): Promise<void> {
-		console.log('[StudentAuth] Startup contribution initializing...');
-
-		// Wait for auth service to be ready
-		await this.authService.whenReady();
-
-		// If not authenticated, show login modal
-		if (this.authService.state === AuthState.Unauthenticated) {
-			console.log('[StudentAuth] No valid authentication, showing login...');
-			await this.commandService.executeCommand(STUDENT_SIGN_IN_COMMAND_ID);
-		} else {
-			console.log('[StudentAuth] Already authenticated');
-		}
-
-		// Listen for auth state changes
-		this.authService.onDidAuthStateChange(state => {
-			console.log('[StudentAuth] Auth state changed:', state);
-
-			// If user becomes unauthenticated while IDE is running, show login
-			if (state === AuthState.Unauthenticated) {
-				this.commandService.executeCommand(STUDENT_SIGN_IN_COMMAND_ID);
-			}
-		});
-	}
-}
-
-// Register the startup contribution to run before the workbench is fully restored
-// This ensures auth is resolved early in the boot process
-registerWorkbenchContribution2(
-	StudentAuthStartupContribution.ID,
-	StudentAuthStartupContribution,
-	WorkbenchPhase.BlockStartup
-);
+// Register Student Auth Service as a singleton (required for all auth-dependent contributions)
+registerSingleton(IStudentAuthService, StudentAuthService, InstantiationType.Eager);
 
 // Surface commands in the Command Palette
 MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
@@ -126,6 +129,48 @@ MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
 		id: STUDENT_SIGN_OUT_COMMAND_ID,
 		title: localize2('studentSignOut', 'Student: Sign Out')
 	}
+});
+
+// Sign In button in title bar (when unauthenticated)
+MenuRegistry.appendMenuItem(MenuId.TitleBar, {
+	command: {
+		id: STUDENT_SIGN_IN_COMMAND_ID,
+		title: localize2('studentSignInTitleBar', 'Sign In')
+	},
+	group: 'navigation',
+	order: 1,
+	when: ContextKeyExpr.not('studentAuthenticated')
+});
+
+// Log Out button in title bar (when authenticated)
+MenuRegistry.appendMenuItem(MenuId.TitleBar, {
+	command: {
+		id: STUDENT_SIGN_OUT_COMMAND_ID,
+		title: localize2('studentSignOutTitleBar', 'Sign Out')
+	},
+	group: 'navigation',
+	order: 2,
+	when: ContextKeyExpr.has('studentAuthenticated')
+});
+
+// Sign In in Command Center (when unauthenticated)
+MenuRegistry.appendMenuItem(MenuId.CommandCenter, {
+	command: {
+		id: STUDENT_SIGN_IN_COMMAND_ID,
+		title: localize2('studentSignInTitleBar', 'Sign In')
+	},
+	order: 1,
+	when: ContextKeyExpr.not('studentAuthenticated')
+});
+
+// Log Out in Command Center (when authenticated)
+MenuRegistry.appendMenuItem(MenuId.CommandCenter, {
+	command: {
+		id: STUDENT_SIGN_OUT_COMMAND_ID,
+		title: localize2('studentSignOutTitleBar', 'Sign Out')
+	},
+	order: 2,
+	when: ContextKeyExpr.has('studentAuthenticated')
 });
 
 console.log('[StudentAuth] Authentication contribution registered successfully');

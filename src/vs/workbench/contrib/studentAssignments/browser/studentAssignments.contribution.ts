@@ -18,6 +18,7 @@ import { EditorExtensions } from '../../../../workbench/common/editor.js';
 import { CourseDetailEditor } from './courseDetailEditor.js';
 import { CourseDetailInput } from './courseDetailInput.js';
 import { AssignmentDetailInput } from './assignmentDetailInput.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 
 // Register the service
 registerSingleton(IStudentAssignmentsService, StudentAssignmentsService, InstantiationType.Delayed);
@@ -43,6 +44,7 @@ viewsRegistry.registerViews([{
 	canToggleVisibility: false,
 	canMoveView: false,
 	ctorDescriptor: new SyncDescriptor(StudentAssignmentsView),
+	when: ContextKeyExpr.has('studentAuthenticated'),
 	weight: 100
 }], VIEW_CONTAINER);
 

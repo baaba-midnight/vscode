@@ -14,6 +14,7 @@ import { StudentChatPanel } from './studentChatPanel.js';
 import { IStudentService, StudentService } from '../common/studentChatService.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 
 console.log('[StudentChat] Registering student chat service and UI contributions');
 
@@ -45,7 +46,7 @@ Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
 		canMoveView: true,
 		weight: 90,
 		order: 0,
-		when: undefined
+		when: ContextKeyExpr.has('studentAuthenticated')
 	}
 ], VIEW_CONTAINER);
 

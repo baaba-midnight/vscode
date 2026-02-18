@@ -13,6 +13,8 @@ import { AssignmentDetailInput } from '../browser/assignmentDetailInput.js';
 import { IStudentAssignmentsService, IAssignment, AssignmentStatus, ICourse } from '../common/studentAssignmentsService.js';
 import { IEditorService } from '../../../../workbench/services/editor/common/editorService.js';
 import { append, $, addDisposableListener, EventType, clearNode, Dimension } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
@@ -48,7 +50,7 @@ export class CourseDetailEditor extends EditorPane {
 		@IStudentService private readonly studentService: IStudentService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IStudentAuthService private readonly authService: IStudentAuthService,
-		@ICommandService private readonly commandService: ICommandService,
+		@ICommandService _commandService: ICommandService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IOpenerService private readonly openerService: IOpenerService,
 	) {
@@ -160,15 +162,12 @@ export class CourseDetailEditor extends EditorPane {
 
 	private renderSignInPrompt(): void {
 		clearNode(this.container);
-		const wrapper = append(this.container, $('.student-auth-required'));
+		const wrapper = append(this.container, $('.student-auth-required.empty-state-signed-out'));
+		append(wrapper, $('span.empty-state-icon' + ThemeIcon.asCSSSelector(Codicon.book)));
+		const hint = append(wrapper, $('.student-auth-hint'));
+		hint.textContent = localize('studentAuthHint', "Not signed in yet");
 		const message = append(wrapper, $('.student-auth-message'));
 		message.textContent = localize('studentAuthRequiredCourseDetail', "Sign in to your school account to view course details and assignments.");
-		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
-		button.textContent = localize('studentAuthSignInButton', "Sign In");
-		addDisposableListener(button, EventType.CLICK, async () => {
-			await this.commandService.executeCommand('student.signIn');
-			// No need to manually reload - the auth state change listener handles it
-		});
 	}
 
 	private renderError(error: unknown): void {
@@ -271,15 +270,6 @@ export class CourseDetailEditor extends EditorPane {
 			const desc = append(info, $('.course-description'));
 			desc.textContent = course.description;
 		}
-
-		// Actions
-		const actions = append(header, $('.course-actions'));
-
-		const openFilesBtn = append(actions, $('button.btn-secondary'));
-		openFilesBtn.textContent = 'Open Course Files';
-		addDisposableListener(openFilesBtn, EventType.CLICK, () => {
-			this.openCourseFiles(course);
-		});
 	}
 
 	private renderAssignments(assignments: IAssignment[]): void {
@@ -368,6 +358,9 @@ export class CourseDetailEditor extends EditorPane {
 
 		const list = append(container, $('ul.submission-files'));
 		for (const file of assignment.files) {
+			console.log('[CourseDetailEditor] Rendering assignment details:', assignment);
+			console.log('Rendering file:', file.name, file.type, file.downloadUrl);
+
 			const item = append(list, $('li'));
 			const nameSpan = append(item, $('span.filename'));
 			nameSpan.textContent = file.name;
@@ -503,12 +496,12 @@ export class CourseDetailEditor extends EditorPane {
 	}
 
 	private async startAssignment(assignment: IAssignment): Promise<void> {
-		// Start assignment - download files
+		// Start assignment - download files and mark as started
 		await this.assignmentsService.startAssignment(assignment.id);
 		// Let the shared student service know which assignment is active for AI chat
 		this.studentService.setCurrentAssignment(assignment.id);
-		// Immediately open the assignment folder so the student sees the files
-		await this.assignmentsService.openAssignmentFolder(assignment.id);
+		// Open the assignment as a single-folder workspace
+		await this.assignmentsService.openAssignmentWorkspace(assignment.id);
 		// Refresh view (status / buttons may have changed)
 		const input = this.input as CourseDetailInput;
 		this.setInput(input, {}, {}, CancellationToken.None);
@@ -517,8 +510,8 @@ export class CourseDetailEditor extends EditorPane {
 	private openAssignmentFiles(assignment: IAssignment): void {
 		// When continuing an assignment, ensure AI chat is scoped to it
 		this.studentService.setCurrentAssignment(assignment.id);
-		// Open assignment folder in explorer
-		this.assignmentsService.openAssignmentFolder(assignment.id);
+		// Open the same single-folder workspace used when starting the assignment
+		void this.assignmentsService.openAssignmentWorkspace(assignment.id);
 	}
 
 	private async submitAssignment(assignment: IAssignment): Promise<void> {
@@ -544,11 +537,6 @@ export class CourseDetailEditor extends EditorPane {
 		// Open submission details
 		const input = new AssignmentDetailInput(assignment, 'submission');
 		this.editorService.openEditor(input);
-	}
-
-	private openCourseFiles(course: ICourse): void {
-		// Open course files folder
-		this.assignmentsService.openCourseFolder(course.id);
 	}
 
 	private isHttpError(error: unknown): error is { status: number } {

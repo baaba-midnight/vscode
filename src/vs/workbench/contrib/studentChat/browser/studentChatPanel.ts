@@ -5,6 +5,8 @@
 
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { append, $, addDisposableListener } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import * as DOM from '../../../../base/browser/dom.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
@@ -19,7 +21,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
 import { IStudentService, IChatMessage, IStudentAssignment } from '../common/studentChatService.js';
-import { renderMarkdown } from '../../../../base/browser/markdownRenderer.js';
+import { renderMarkdown, IRenderedMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
@@ -30,6 +32,7 @@ import { toDisposable } from '../../../../base/common/lifecycle.js';
 export class StudentChatPanel extends ViewPane {
 	private _chatContainer!: HTMLElement;
 	private _messagesContainer!: HTMLElement;
+	private _messageDisposables: IRenderedMarkdown[] = [];
 	private _inputContainer!: HTMLElement;
 	private _messageInput!: HTMLTextAreaElement;
 	private _sendButton!: HTMLButtonElement;
@@ -98,6 +101,7 @@ export class StudentChatPanel extends ViewPane {
 		this._assignmentSelect.addEventListener('change', () => {
 			const value = this._assignmentSelect.value;
 			this.studentService.setCurrentAssignment(value || undefined);
+			this._loadChatHistory();
 		});
 
 		// Messages container with scroll
@@ -130,12 +134,15 @@ export class StudentChatPanel extends ViewPane {
 			return;
 		}
 
+		console.log('CHAT INITIALIZED - User is authenticated');
+
 		this._createLayout();
 		await this._loadAssignmentsForSelector();
 		await this._loadChatHistory();
 	}
 
 	private async _loadAssignmentsForSelector(): Promise<void> {
+		console.log('ASSIGNMENT SELECTOR OUT');
 		try {
 			this._assignments = await this.studentService.getAssignments();
 			// Clear existing options except the first ("None")
@@ -232,16 +239,18 @@ export class StudentChatPanel extends ViewPane {
 		const contentElement = append(messageElement, $('.message-content'));
 
 
+
 		// Render markdown content safely
 		const md = new MarkdownString(message.content);
 		md.isTrusted = false;
 		md.supportThemeIcons = true;
 		md.supportHtml = false;
 		const renderedMarkdown = renderMarkdown(md, { codeBlockRenderer: undefined });
+		this._messageDisposables.push(renderedMarkdown); // track for disposal
 		append(contentElement, renderedMarkdown.element);
 
 		// add user/AI specific classes
-		if (message.isUser) {
+		if (message.isUser || message.sender_type === 'student') {
 			messageElement.classList.add('user-message');
 		} else {
 			messageElement.classList.add('ai-message');
@@ -251,13 +260,50 @@ export class StudentChatPanel extends ViewPane {
 		this._scrollToBottom();
 	}
 
+	private _disposeAllMessageDisposables(): void {
+		for (const disposable of this._messageDisposables) {
+			disposable.dispose();
+		}
+		this._messageDisposables = [];
+	}
+
 	private async _loadChatHistory(): Promise<void> {
+		// Show loading conversations message
+		this._showEmptyChatMessage('Loading conversations...');
 		try {
+			const currentAssignment = this.studentService.getCurrentAssignment();
+			if (!currentAssignment) {
+				this._showEmptyChatMessage('Select an assignment to view chat history.');
+				return;
+			}
 			const history = await this.studentService.getChatHistory();
+			if (!history || history.length === 0) {
+				this._showEmptyChatMessage('No chat history yet for this assignment.');
+				return;
+			}
+			// Clear loading message before rendering messages
+			this._disposeAllMessageDisposables();
+			while (this._messagesContainer.firstChild) {
+				this._messagesContainer.removeChild(this._messagesContainer.firstChild);
+			}
 			history.forEach(message => this._addMessage(message));
 		} catch (error) {
 			console.error('Failed to load chat history:', error);
+			this._showEmptyChatMessage('Failed to load chat history.');
 		}
+	}
+
+	private _showEmptyChatMessage(text: string): void {
+		this._disposeAllMessageDisposables();
+
+		// Clear messages container
+		while (this._messagesContainer.firstChild) {
+			this._messagesContainer.removeChild(this._messagesContainer.firstChild);
+		}
+		const emptyMsg = document.createElement('div');
+		emptyMsg.className = 'chat-empty-message';
+		emptyMsg.textContent = text;
+		this._messagesContainer.appendChild(emptyMsg);
 	}
 
 	private _renderSignInPrompt(): void {
@@ -266,7 +312,10 @@ export class StudentChatPanel extends ViewPane {
 			this._chatContainer.removeChild(this._chatContainer.firstChild);
 		}
 
-		const wrapper = append(this._chatContainer, $('.student-auth-required'));
+		const wrapper = append(this._chatContainer, $('.student-auth-required.empty-state-signed-out'));
+		append(wrapper, $('span.empty-state-icon' + ThemeIcon.asCSSSelector(Codicon.commentDiscussion)));
+		const hint = append(wrapper, $('.student-auth-hint'));
+		hint.textContent = localize('studentAuthHint', "Not signed in yet");
 		const message = append(wrapper, $('.student-auth-message'));
 		message.textContent = localize('studentAuthRequiredChat', "Sign in to your school account to chat with the AI assistant.");
 		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
@@ -315,6 +364,7 @@ export class StudentChatPanel extends ViewPane {
 	private async _clearChat(): Promise<void> {
 		try {
 			await this.studentService.clearChatHistory();
+			this._disposeAllMessageDisposables();
 
 			// clear all messages safely
 			while (this._messagesContainer.firstChild) {
