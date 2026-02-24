@@ -20,7 +20,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
-import { IStudentService, IChatMessage, IStudentAssignment } from '../common/studentChatService.js';
+import { IStudentService, IChatMessage } from '../common/studentChatService.js';
 import { renderMarkdown, IRenderedMarkdown } from '../../../../base/browser/markdownRenderer.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -39,8 +39,6 @@ export class StudentChatPanel extends ViewPane {
 	private _clearButton!: HTMLButtonElement;
 	private _loadingElement: HTMLElement | undefined;
 	private _assignmentHeader!: HTMLElement;
-	private _assignmentSelect!: HTMLSelectElement;
-	private _assignments: IStudentAssignment[] = [];
 	private _authPollInterval: number | undefined;
 
 	private readonly _onMessageSent = this._register(new Emitter<string>());
@@ -82,6 +80,10 @@ export class StudentChatPanel extends ViewPane {
 			hoverService
 		);
 		this._register(this.studentService.onChatMessage(message => this._handleIncomingMessage(message)));
+		this._register(this.studentService.onCurrentAssignmentChange(() => {
+			this._updateAssignmentHeader();
+			this._loadChatHistory();
+		}));
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -92,17 +94,9 @@ export class StudentChatPanel extends ViewPane {
 	}
 
 	private _createLayout(): void {
-		// Assignment selector header
-		this._assignmentHeader = append(this._chatContainer, $('.chat-header'));
-		const label = append(this._assignmentHeader, $('.chat-assignment-label'));
-		label.textContent = localize('studentChatAssignmentLabel', "Assignment:");
-		this._assignmentSelect = append(this._assignmentHeader, $('select.chat-assignment-select')) as HTMLSelectElement;
-		this._assignmentSelect.appendChild(new Option(localize('studentChatAssignmentNone', "None"), ''));
-		this._assignmentSelect.addEventListener('change', () => {
-			const value = this._assignmentSelect.value;
-			this.studentService.setCurrentAssignment(value || undefined);
-			this._loadChatHistory();
-		});
+		// Assignment context header (read-only)
+		this._assignmentHeader = append(this._chatContainer, $('.chat-assignment-header'));
+		this._updateAssignmentHeader();
 
 		// Messages container with scroll
 		this._messagesContainer = append(this._chatContainer, $('.chat-messages'));
@@ -126,6 +120,99 @@ export class StudentChatPanel extends ViewPane {
 		this._setupEventListeners();
 	}
 
+	private _updateAssignmentHeader(): void {
+		if (!this._assignmentHeader) {
+			return;
+		}
+
+		// Clear existing header content
+		while (this._assignmentHeader.firstChild) {
+			this._assignmentHeader.removeChild(this._assignmentHeader.firstChild);
+		}
+
+		const context = this.studentService.getCurrentAssignmentContext();
+
+		if (!context) {
+			// No assignment active - show nudge with navigation button
+			this._assignmentHeader.classList.add('chat-assignment-header--empty');
+			this._assignmentHeader.classList.remove('chat-assignment-header--active');
+
+			const icon = append(this._assignmentHeader, $('span.chat-assignment-no-icon'));
+			icon.textContent = 'CP';
+			const text = append(this._assignmentHeader, $('span.chat-assignment-no-text'));
+			text.textContent = localize('studentChatNoAssignment', "No assignment selected");
+			const btn = append(this._assignmentHeader, $('button.chat-go-to-assignments-btn')) as HTMLButtonElement;
+			btn.textContent = localize('studentChatGoToAssignments', "Go to Assignments");
+			this._register(addDisposableListener(btn, 'click', () => {
+				void this.commandService.executeCommand('workbench.view.studentAssignments.focus');
+			}));
+
+			// Disable input when no assignment is active
+			this._setInputEnabled(false);
+		} else {
+			// Assignment is active - render rich read-only context card
+			this._assignmentHeader.classList.add('chat-assignment-header--active');
+			this._assignmentHeader.classList.remove('chat-assignment-header--empty');
+
+			const left = append(this._assignmentHeader, $('.chat-assignment-info'));
+
+			if (context.courseName) {
+				const course = append(left, $('span.chat-assignment-course'));
+				course.textContent = context.courseName;
+			}
+
+			const title = append(left, $('span.chat-assignment-title'));
+			title.textContent = context.title;
+
+			if (context.dueDate) {
+				const due = append(left, $('span.chat-assignment-due'));
+				const formatted = this._formatDueDate(context.dueDate);
+				due.textContent = localize('studentChatDue', "Due {0}", formatted);
+			}
+
+			const right = append(this._assignmentHeader, $('.chat-assignment-meta'));
+			if (context.status) {
+				const badge = append(right, $('span.chat-assignment-status-badge'));
+				badge.textContent = this._formatStatus(context.status);
+				badge.classList.add(`chat-assignment-status--${context.status.toLowerCase().replace(/\s+/g, '-')}`);
+			}
+
+			this._setInputEnabled(true);
+		}
+	}
+
+	private _setInputEnabled(enabled: boolean): void {
+		if (!this._messageInput || !this._sendButton) {
+			return;
+		}
+		this._messageInput.disabled = !enabled;
+		this._sendButton.disabled = !enabled;
+		if (!enabled) {
+			this._messageInput.placeholder = localize('studentChatDisabledPlaceholder', "Select an assignment to start chatting...");
+		} else {
+			this._messageInput.placeholder = localize('studentChatPlaceholder', "Ask me anything about your learning...");
+		}
+	}
+
+	private _formatStatus(status: string): string {
+		switch (status.toLowerCase()) {
+			case 'in-progress': return 'In Progress';
+			case 'not-started': return 'Not Started';
+			case 'submitted': return 'Submitted';
+			case 'overdue': return 'Overdue';
+			default: return status;
+		}
+	}
+
+	private _formatDueDate(dueDate: string): string {
+		try {
+			const date = new Date(dueDate);
+			return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+		} catch {
+			return dueDate;
+		}
+	}
+
 	private async _initialize(): Promise<void> {
 		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
 		if (!isAuthed) {
@@ -137,29 +224,7 @@ export class StudentChatPanel extends ViewPane {
 		console.log('CHAT INITIALIZED - User is authenticated');
 
 		this._createLayout();
-		await this._loadAssignmentsForSelector();
 		await this._loadChatHistory();
-	}
-
-	private async _loadAssignmentsForSelector(): Promise<void> {
-		console.log('ASSIGNMENT SELECTOR OUT');
-		try {
-			this._assignments = await this.studentService.getAssignments();
-			// Clear existing options except the first ("None")
-			while (this._assignmentSelect.options.length > 1) {
-				this._assignmentSelect.remove(1);
-			}
-			for (const assignment of this._assignments) {
-				const option = new Option(assignment.title, assignment.assignment_id);
-				this._assignmentSelect.appendChild(option);
-			}
-			const current = this.studentService.getCurrentAssignment();
-			if (current) {
-				this._assignmentSelect.value = current;
-			}
-		} catch (error) {
-			console.error('Failed to load assignments for chat selector:', error);
-		}
 	}
 
 	private _setupEventListeners(): void {
@@ -348,7 +413,6 @@ export class StudentChatPanel extends ViewPane {
 				this._chatContainer.removeChild(this._chatContainer.firstChild);
 			}
 			this._createLayout();
-			await this._loadAssignmentsForSelector();
 			await this._loadChatHistory();
 		}, 1000);
 

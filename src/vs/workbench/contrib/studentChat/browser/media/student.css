@@ -11,27 +11,130 @@
 	padding: 8px;
 }
 
-.chat-header {
+/* Assignment context header - replaces the old dropdown */
+.chat-assignment-header {
 	display: flex;
-	align-items: center;
-	gap: 6px;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 10px;
 	margin-bottom: 6px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-panel-border);
+	background: var(--vscode-sideBar-background);
+	min-height: 40px;
 }
 
-.chat-assignment-label {
+/* Active state - an assignment is selected */
+.chat-assignment-header--active {
+	border-color: var(--vscode-focusBorder);
+	background: var(--vscode-editor-background);
+}
+
+/* Empty state - no assignment selected */
+.chat-assignment-header--empty {
+	align-items: center;
+	background: var(--vscode-inputValidation-warningBackground,
+			rgba(255, 200, 0, 0.08));
+	border-color: var(--vscode-inputValidation-warningBorder,
+			rgba(255, 200, 0, 0.4));
+}
+
+.chat-assignment-no-icon {
+	font-size: 14px;
+	flex-shrink: 0;
+}
+
+.chat-assignment-no-text {
+	flex: 1;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}
+
+.chat-go-to-assignments-btn {
+	padding: 4px 10px;
+	border-radius: 4px;
+	border: 1px solid var(--vscode-button-border);
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
 	font-size: 11px;
+	cursor: pointer;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.chat-go-to-assignments-btn:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Left column: course, title, due date */
+.chat-assignment-info {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.chat-assignment-course {
+	font-size: 10px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.chat-assignment-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.chat-assignment-due {
+	font-size: 10px;
 	color: var(--vscode-descriptionForeground);
 }
 
-.chat-assignment-select {
-	flex: 1;
-	max-width: 100%;
-	padding: 2px 6px;
-	font-size: 11px;
-	border-radius: 3px;
-	border: 1px solid var(--vscode-input-border);
-	background: var(--vscode-input-background);
-	color: var(--vscode-input-foreground);
+/* Right column: status badge */
+.chat-assignment-meta {
+	display: flex;
+	align-items: flex-start;
+	flex-shrink: 0;
+}
+
+.chat-assignment-status-badge {
+	font-size: 10px;
+	font-weight: 600;
+	padding: 2px 7px;
+	border-radius: 10px;
+	white-space: nowrap;
+}
+
+.chat-assignment-status--in-progress {
+	background: rgba(0, 120, 212, 0.15);
+	color: var(--vscode-terminal-ansiBlue, #0078d4);
+}
+
+.chat-assignment-status--submitted {
+	background: rgba(0, 170, 68, 0.15);
+	color: var(--vscode-terminal-ansiGreen, #00aa44);
+}
+
+.chat-assignment-status--overdue {
+	background: rgba(230, 60, 60, 0.15);
+	color: var(--vscode-errorForeground, #e63c3c);
+}
+
+.chat-assignment-status--not-started {
+	background: var(--vscode-textCodeBlock-background);
+	color: var(--vscode-descriptionForeground);
 }
 
 .chat-messages {

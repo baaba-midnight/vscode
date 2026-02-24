@@ -15,6 +15,9 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IStudentAuthService, AuthState, STUDENT_AUTH_STUDENT_ID_KEY } from '../../studentAuthentication/common/studentAuth.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+
+const ACTIVE_ASSIGNMENT_CONTEXT_KEY = 'student.activeAssignmentContext';
 
 // Local definition for IChatMessage (frontend type)
 export interface IChatMessage {
@@ -26,12 +29,21 @@ export interface IChatMessage {
 	sender_type?: 'student' | 'system';
 }
 
+export interface ICurrentAssignmentContext {
+	assignmentId: string;
+	title: string;
+	courseName?: string;
+	status?: string;
+	dueDate?: string;
+}
+
 export interface IStudentService {
 	readonly _serviceBrand: undefined;
 
 	// Events
 	readonly onAssignmentsUpdate: Event<IStudentAssignment[]>;
 	readonly onChatMessage: Event<IChatMessage>;
+	readonly onCurrentAssignmentChange: Event<ICurrentAssignmentContext | undefined>;
 
 	// Preload Student Context
 	preloadStudentContext(): Promise<void>;
@@ -41,8 +53,9 @@ export interface IStudentService {
 	getAssignmentById(assignmentId: string): Promise<IStudentAssignment | undefined>;
 	submitAssignment(assignmentId: string, fileUris: string[]): Promise<void>;
 	submitReflection(assignmentId: string, confidence: number, difficulty: string, text?: string): Promise<void>;
-	setCurrentAssignment(assignmentId: string | undefined): void;
+	setCurrentAssignment(context: ICurrentAssignmentContext | undefined): void;
 	getCurrentAssignment(): string | undefined;
+	getCurrentAssignmentContext(): ICurrentAssignmentContext | undefined;
 
 	// Chat methods
 	sendChatMessage(message: string): Promise<IChatMessage>;
@@ -76,12 +89,15 @@ export class StudentService extends Disposable implements IStudentService {
 	private readonly _onChatMessage = this._register(new Emitter<IChatMessage>());
 	readonly onChatMessage: Event<IChatMessage> = this._onChatMessage.event;
 
+	private readonly _onCurrentAssignmentChange = this._register(new Emitter<ICurrentAssignmentContext | undefined>());
+	readonly onCurrentAssignmentChange: Event<ICurrentAssignmentContext | undefined> = this._onCurrentAssignmentChange.event;
+
 	private _apiClient: ApiClient;
 	private _initialized = false;
 	private preloadPromise: Promise<void> | null = null;
 	private _studentId: string | undefined;
 	private _currentAssignments: IStudentAssignment[] = [];
-	private _currentAssignmentId: string | undefined;
+	private _currentAssignmentContext: ICurrentAssignmentContext | undefined;
 	private _chatHistory: IChatMessage[] = [];
 	private _fetchedAssignmentDetails = new Set<string>();
 
@@ -106,6 +122,7 @@ export class StudentService extends Disposable implements IStudentService {
 		@ICommandService private readonly commandService: ICommandService,
 		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 		@IStudentAuthService private readonly authService: IStudentAuthService,
+		@IStorageService private readonly storageService: IStorageService
 	) {
 		super();
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
@@ -127,10 +144,11 @@ export class StudentService extends Disposable implements IStudentService {
 		this._initialized = false;
 		this.preloadPromise = null;
 		this._currentAssignments = [];
-		this._currentAssignmentId = undefined;
+		this._currentAssignmentContext = undefined;
 		this._chatHistory = [];
 		this._fetchedAssignmentDetails.clear();
 		this._studentId = undefined;
+		this.storageService.remove(ACTIVE_ASSIGNMENT_CONTEXT_KEY, StorageScope.APPLICATION);
 	}
 
 	private async _ensureInitialized(): Promise<void> {
@@ -301,12 +319,46 @@ export class StudentService extends Disposable implements IStudentService {
 		}
 	}
 
-	setCurrentAssignment(assignmentId: string | undefined): void {
-		this._currentAssignmentId = assignmentId;
+	setCurrentAssignment(context: ICurrentAssignmentContext | undefined): void {
+		this._currentAssignmentContext = context;
+
+		if (context) {
+			this.storageService.store(
+				ACTIVE_ASSIGNMENT_CONTEXT_KEY,
+				JSON.stringify(context),
+				StorageScope.APPLICATION,
+				StorageTarget.MACHINE
+			);
+		} else {
+			this.storageService.remove(ACTIVE_ASSIGNMENT_CONTEXT_KEY, StorageScope.APPLICATION);
+		}
+
+		this._onCurrentAssignmentChange.fire(context);
 	}
 
 	getCurrentAssignment(): string | undefined {
-		return this._currentAssignmentId;
+		return this._getCurrentAssignmentContext()?.assignmentId;
+	}
+
+	getCurrentAssignmentContext(): ICurrentAssignmentContext | undefined {
+		return this._getCurrentAssignmentContext();
+	}
+
+	private _getCurrentAssignmentContext(): ICurrentAssignmentContext | undefined {
+		if (this._currentAssignmentContext) {
+			return this._currentAssignmentContext;
+		}
+
+		try {
+			const stored = this.storageService.get(ACTIVE_ASSIGNMENT_CONTEXT_KEY, StorageScope.APPLICATION);
+			if (stored) {
+				this._currentAssignmentContext = JSON.parse(stored) as ICurrentAssignmentContext;
+				return this._currentAssignmentContext;
+			}
+		} catch {
+			console.error('Failed to parse stored assignment context');
+		}
+		return undefined;
 	}
 
 	async sendChatMessage(message: string): Promise<IChatMessage> {
@@ -327,7 +379,7 @@ export class StudentService extends Disposable implements IStudentService {
 				student_query: message,
 				reflection: null,
 				task_result: null,
-				assignment_id: this._currentAssignmentId ?? null,
+				assignment_id: this._currentAssignmentContext?.assignmentId ?? null,
 			};
 
 			const response = await this._withAuthRetry(() => this._apiClient.adapt(payload));
@@ -365,7 +417,7 @@ export class StudentService extends Disposable implements IStudentService {
 		await this._ensureInitialized();
 		try {
 			// Fetch from backend route
-			const response = await this._withAuthRetry(() => this._apiClient.get<ChatMessage[]>(`/chat/${this._currentAssignmentId}`));
+			const response = await this._withAuthRetry(() => this._apiClient.get<ChatMessage[]>(`/chat/${this._currentAssignmentContext?.assignmentId}`));
 			if (response.success && Array.isArray(response.data)) {
 				this._chatHistory = response.data.map(msg => this._toIChatMessage(msg));
 				return [...this._chatHistory];

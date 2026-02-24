@@ -14,13 +14,17 @@ import { IPathService } from '../../../services/path/common/pathService.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IRequestService } from '../../../../platform/request/common/request.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { streamToBuffer } from '../../../../base/common/buffer.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { withAuthRetry } from '../../studentAuthentication/common/authUtils.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceEditingService } from '../../../services/workspaces/common/workspaceEditing.js';
 import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 
 export const IStudentAssignmentsService = createDecorator<IStudentAssignmentsService>('studentAssignmentsService');
+const ACTIVE_ASSIGNMENTS_FOLDER_KEY = 'student.activeAssignmentsFolderUri';
 
 export enum CourseStatus {
 	Active = 'active',
@@ -100,6 +104,12 @@ interface ISubmissionResponse {
 	feedback?: string;
 	graded_at: string | null;
 	files: ISubmissionResponseFile[];
+}
+
+interface DownloadResult {
+	downloaded: number;
+	skipped: number;
+	failed: { name: string; reason: string }[];
 }
 
 /**
@@ -200,6 +210,8 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		@IRequestService private readonly requestService: IRequestService,
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IWorkspaceEditingService private readonly workspaceEditingService: IWorkspaceEditingService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IStorageService private readonly storageService: IStorageService
 	) {
 		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
 		this.apiClient = new ApiClient(this.commandService, baseURL);
@@ -275,7 +287,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		}
 
 		try {
-			const response = await this.apiClient.get<CourseResponse>(`/student/courses/${courseId}`);
+			const response = await withAuthRetry(this.authService, () => this.apiClient.get<CourseResponse>(`/student/courses/${courseId}`));
 			if (response.success && response.data) {
 				const course = this.toCourse(response.data);
 				this.courses.push(course);
@@ -331,7 +343,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 		// Fetch from API
 		try {
-			const response = await this.apiClient.get<AssignmentResponse>(`/student/assignments/${assignmentId}`);
+			const response = await withAuthRetry(this.authService, () => this.apiClient.get<AssignmentResponse>(`/student/assignments/${assignmentId}`));
 			if (response.success && response.data) {
 				const assignment = this.toAssignment(response.data);
 				this.updateAssignmentCache(assignment);
@@ -364,7 +376,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 		try {
 			// Call backend to mark assignment as started
-			await this.apiClient.post(`/student/assignments/${assignmentId}/start`, {});
+			await withAuthRetry(this.authService, () => this.apiClient.post(`/student/assignments/${assignmentId}/start`, {}));
 
 			// Download assignment files
 			await this.downloadAssignmentFiles(assignment);
@@ -385,9 +397,9 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		}
 
 		try {
-			await this.apiClient.post(`/student/assignments/${assignmentId}/submit`, {
+			await withAuthRetry(this.authService, () => this.apiClient.post(`/student/assignments/${assignmentId}/submit`, {
 				file_uris: fileUris
-			});
+			}));
 
 			// Update local cache
 			const assignment = await this.getAssignment(assignmentId);
@@ -408,7 +420,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		}
 
 		try {
-			const response = await this.apiClient.get<ISubmissionResponse>(`/student/assignments/${assignmentId}/submission`);
+			const response = await withAuthRetry(this.authService, () => this.apiClient.get<ISubmissionResponse>(`/student/assignments/${assignmentId}/submission`));
 			if (response.success && response.data) {
 				return this.toSubmission(response.data);
 			}
@@ -465,9 +477,28 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 				return;
 			}
 
-			// Open the assignment folder in a new window via command.
-			// This avoids importing browser-specific host services from the common layer.
-			await this.commandService.executeCommand('vscode.openFolder', folderUri, { forceNewWindow: true });
+			// Persist the folder URI so it can be restored after the workspace reloads.
+			// SetCurrentAssignment
+			// window reload triggered by updateFolders wipes
+			this.storageService.store(
+				ACTIVE_ASSIGNMENTS_FOLDER_KEY,
+				folderUri.toString(),
+				StorageScope.APPLICATION,
+				StorageTarget.MACHINE
+			);
+
+			// Replace whatever folder is currently in the workspace with this
+			// assignment's folder
+
+			const workspace = this.workspaceContextService.getWorkspace();
+			const existingFolders = workspace.folders.map(f => f.uri);
+
+			await this.workspaceEditingService.addFolders([{ uri: folderUri }], false);
+
+			const toRemove = existingFolders.filter(uri => uri.toString() !== folderUri.toString());
+			if (toRemove.length > 0) {
+				await this.workspaceEditingService.removeFolders(toRemove, false);
+			}
 		} catch (error) {
 			console.error('[StudentAssignmentsService] Failed to open assignment workspace', error);
 		}
@@ -511,7 +542,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 	private async fetchCourses(): Promise<void> {
 		try {
-			const response = await this.apiClient.get<CourseResponse[]>('/student/courses');
+			const response = await withAuthRetry(this.authService, () => this.apiClient.get<CourseResponse[]>('/student/courses'));
 
 			if (response.success && response.data) {
 				this.courses = response.data.map(course => this.toCourse(course));
@@ -533,7 +564,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 
 	private async fetchAssignmentsForCourse(courseId: string): Promise<void> {
 		try {
-			const response = await this.apiClient.get<AssignmentResponse[]>(`/student/courses/${courseId}/assignments`);
+			const response = await withAuthRetry(this.authService, () => this.apiClient.get<AssignmentResponse[]>(`/student/courses/${courseId}/assignments`));
 			if (response.success && response.data) {
 				const normalized = response.data.map(assignment => this.toAssignment(assignment));
 				this.assignments.set(courseId, normalized);
@@ -625,6 +656,51 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		};
 	}
 
+	/**
+	 * Download a list of files for an assignment. Returns an aggregated DownloadResult.
+	 */
+	private async downloadFiles(assignment: IAssignment, files: IAssignmentFile[]): Promise<DownloadResult> {
+		const course = await this.getCourse(assignment.courseId);
+		const folderUri = await this.getAssignmentFolderUri(assignment, course);
+		await this.fileService.createFolder(folderUri);
+
+		const result: DownloadResult = { downloaded: 0, skipped: 0, failed: [] };
+
+		for (const file of files) {
+			if (!file.downloadUrl) {
+				result.skipped++;
+				continue;
+			}
+
+			const targetUri = joinPath(folderUri, this.sanitizeName(file.name));
+
+			if (await this.fileService.exists(targetUri)) {
+				console.log(`[StudentAssignmentsService] File already exists, skipping download: ${file.name}`);
+				result.skipped++;
+				continue;
+			}
+
+			const cts = new CancellationTokenSource();
+			const timeout = setTimeout(() => cts.cancel(), 30_000);
+
+			try {
+				const context = await this.requestService.request({ url: file.downloadUrl, type: 'GET' }, cts.token);
+				const buffer = await streamToBuffer(context.stream);
+				await this.fileService.writeFile(targetUri, buffer);
+				console.log(`[StudentAssignmentsService] Downloaded file: ${file.name}`);
+				result.downloaded++;
+			} catch (error) {
+				console.error('[StudentAssignmentsService] Failed to download assignment file', file.name, error);
+				result.failed.push({ name: file.name, reason: error?.message || String(error) });
+			} finally {
+				clearTimeout(timeout);
+				cts.dispose();
+			}
+		}
+
+		return result;
+	}
+
 	private toSubmission(submission: ISubmissionResponse): ISubmission {
 		return {
 			assignmentId: String(submission.assignment_id),
@@ -633,11 +709,13 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			score: typeof submission.score === 'number' ? submission.score : null,
 			feedback: submission.feedback,
 			gradedAt: submission.graded_at ? new Date(submission.graded_at) : null,
-			files: Array.isArray(submission.files) ? submission.files.map(file => ({
-				filename: String(file.filename),
-				mimeType: String(file.mime_type),
-				url: String(file.download_url)
-			})) : []
+			files: Array.isArray(submission.files)
+				? submission.files.map(file => ({
+					filename: String(file.filename),
+					mimeType: String(file.mime_type),
+					url: String(file.download_url)
+				}))
+				: []
 		};
 	}
 
@@ -691,33 +769,34 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 	}
 
 	private async downloadAssignmentFiles(assignment: IAssignment): Promise<URI | undefined> {
-		const course = await this.getCourse(assignment.courseId);
-		const folderUri = await this.getAssignmentFolderUri(assignment, course);
-		await this.fileService.createFolder(folderUri);
+		const result = await this.downloadFiles(assignment, assignment.files);
 
-		for (const file of assignment.files) {
-			if (!file.downloadUrl) {
-				continue;
-			}
+		if (result.failed.length > 0) {
+			const msg = `Downloaded ${result.downloaded} files, ${result.failed.length} failed.`;
+			const choices = [
+				{
+					label: 'Retry failed',
+					run: async () => {
+						const failedFiles = assignment.files.filter(f => result.failed.some(ff => ff.name === f.name));
+						const retryResult = await this.downloadFiles(assignment, failedFiles);
+						const retryMsg = `Retry: downloaded ${retryResult.downloaded}, ${retryResult.failed.length} still failed.`;
+						this.notificationService.info(retryMsg);
+					}
+				},
+				{
+					label: 'Open folder',
+					run: () => {
+						this.getAssignmentFolderUri(assignment, undefined).then(uri => {
+							this.commandService.executeCommand('revealFileInOS', uri);
+						}).catch(() => { /* ignore */ });
+					},
+					isSecondary: true
+				}
+			];
 
-			const targetUri = joinPath(folderUri, this.sanitizeName(file.name));
-
-			// do not overwrite student's existing work when continuing an assigment
-			if (await this.fileService.exists(targetUri)) {
-				console.log(`[StudentAssignmentsService] File already exists, skipping download: ${file.name}`);
-				continue;
-			}
-
-			try {
-				const context = await this.requestService.request({ url: file.downloadUrl, type: 'GET' }, CancellationToken.None);
-				const buffer = await streamToBuffer(context.stream);
-				await this.fileService.writeFile(targetUri, buffer);
-				console.log(`[StudentAssignmentsService] Downloaded file: ${file.name}`);
-			} catch (error) {
-				console.error('[StudentAssignmentsService] Failed to download assignment file', file.name, error);
-			}
+			this.notificationService.prompt(Severity.Warning, msg, choices);
 		}
 
-		return folderUri;
+		return this.getAssignmentFolderUri(assignment, await this.getCourse(assignment.courseId));
 	}
 }

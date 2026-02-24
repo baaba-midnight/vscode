@@ -27,6 +27,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { IStudentService } from '../../studentChat/common/studentChatService.js';
 import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 
 /**
  * Editor that displays course details and assignment cards
@@ -53,6 +54,7 @@ export class CourseDetailEditor extends EditorPane {
 		@ICommandService _commandService: ICommandService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IOpenerService private readonly openerService: IOpenerService,
+		@INotificationService private readonly notificationService: INotificationService
 	) {
 		super(CourseDetailEditor.ID, group, telemetryService, themeService, storageService);
 
@@ -496,22 +498,44 @@ export class CourseDetailEditor extends EditorPane {
 	}
 
 	private async startAssignment(assignment: IAssignment): Promise<void> {
-		// Start assignment - download files and mark as started
+		this.notificationService.info(`Loading "${assignment.title}"... please wait.`);
+
 		await this.assignmentsService.startAssignment(assignment.id);
-		// Let the shared student service know which assignment is active for AI chat
-		this.studentService.setCurrentAssignment(assignment.id);
-		// Open the assignment as a single-folder workspace
+
+		this.studentService.setCurrentAssignment({
+			assignmentId: assignment.id,
+			title: assignment.title,
+			status: assignment.status,
+			dueDate: typeof assignment.dueDate === 'string' ? assignment.dueDate : assignment.dueDate?.toISOString(),
+		});
+
 		await this.assignmentsService.openAssignmentWorkspace(assignment.id);
-		// Refresh view (status / buttons may have changed)
+
+		this.notificationService.prompt(
+			Severity.Info,
+			`✓ "${assignment.title}" is ready - check the Explorer panel for your files. The AI Chat is now scoped to this assignment.`,
+			[{ label: 'Got it', run: () => { } }]
+		);
+
 		const input = this.input as CourseDetailInput;
 		this.setInput(input, {}, {}, CancellationToken.None);
 	}
 
 	private openAssignmentFiles(assignment: IAssignment): void {
-		// When continuing an assignment, ensure AI chat is scoped to it
-		this.studentService.setCurrentAssignment(assignment.id);
-		// Open the same single-folder workspace used when starting the assignment
-		void this.assignmentsService.openAssignmentWorkspace(assignment.id);
+		this.studentService.setCurrentAssignment({
+			assignmentId: assignment.id,
+			title: assignment.title,
+			status: assignment.status,
+			dueDate: typeof assignment.dueDate === 'string' ? assignment.dueDate : assignment.dueDate?.toISOString(),
+		});
+
+		void this.assignmentsService.openAssignmentWorkspace(assignment.id).then(() => {
+			this.notificationService.prompt(
+				Severity.Info,
+				`✓ "${assignment.title}" loaded - check the Explorer panel for your files. The AI Chat is now scoped to this assignment.`,
+				[{ label: 'Got it', run: () => { } }]
+			);
+		});
 	}
 
 	private async submitAssignment(assignment: IAssignment): Promise<void> {

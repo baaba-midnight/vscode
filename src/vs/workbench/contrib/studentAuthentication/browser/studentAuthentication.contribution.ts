@@ -15,6 +15,7 @@ import { IContextViewService } from '../../../../platform/contextview/browser/co
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { MenuRegistry, MenuId } from '../../../../platform/actions/common/actions.js';
 import { StudentAuthService } from './studentAuthService.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 
 // Commands for sign-in / sign-out
 export const STUDENT_SIGN_IN_COMMAND_ID = 'student.signIn';
@@ -120,14 +121,16 @@ registerSingleton(IStudentAuthService, StudentAuthService, InstantiationType.Eag
 MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
 	command: {
 		id: STUDENT_SIGN_IN_COMMAND_ID,
-		title: localize2('studentSignIn', 'Student: Sign In')
+		title: localize2('studentSignIn', 'Student: Sign In'),
+		icon: Codicon.signIn
 	}
 });
 
 MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
 	command: {
 		id: STUDENT_SIGN_OUT_COMMAND_ID,
-		title: localize2('studentSignOut', 'Student: Sign Out')
+		title: localize2('studentSignOut', 'Student: Sign Out'),
+		icon: Codicon.signOut
 	}
 });
 
@@ -135,7 +138,8 @@ MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
 MenuRegistry.appendMenuItem(MenuId.TitleBar, {
 	command: {
 		id: STUDENT_SIGN_IN_COMMAND_ID,
-		title: localize2('studentSignInTitleBar', 'Sign In')
+		title: localize2('studentSignInTitleBar', 'Sign In'),
+		icon: Codicon.signIn
 	},
 	group: 'navigation',
 	order: 1,
@@ -146,7 +150,8 @@ MenuRegistry.appendMenuItem(MenuId.TitleBar, {
 MenuRegistry.appendMenuItem(MenuId.TitleBar, {
 	command: {
 		id: STUDENT_SIGN_OUT_COMMAND_ID,
-		title: localize2('studentSignOutTitleBar', 'Sign Out')
+		title: localize2('studentSignOutTitleBar', 'Sign Out'),
+		icon: Codicon.signOut
 	},
 	group: 'navigation',
 	order: 2,
