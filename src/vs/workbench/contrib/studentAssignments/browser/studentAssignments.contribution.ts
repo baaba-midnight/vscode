@@ -12,12 +12,13 @@ import { LifecyclePhase } from '../../../../workbench/services/lifecycle/common/
 import { StudentAssignmentsViewPaneContainer, StudentAssignmentsView, StudentAssignmentsWorkbenchContribution, STUDENT_ASSIGNMENTS_VIEW_CONTAINER_ID } from './studentAssignmentsView.js';
 import { IStudentAssignmentsService, StudentAssignmentsService } from '../common/studentAssignmentsService.js';
 import { ViewContainer, IViewContainersRegistry, Extensions as ViewContainerExtensions, ViewContainerLocation, IViewsRegistry } from '../../../../workbench/common/views.js';
-import { ThemeIcon } from '../../../../base/common/themables.js';
+import { Codicon } from '../../../../base/common/codicons.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../workbench/browser/editor.js';
 import { EditorExtensions } from '../../../../workbench/common/editor.js';
 import { CourseDetailEditor } from './courseDetailEditor.js';
 import { CourseDetailInput } from './courseDetailInput.js';
 import { AssignmentDetailInput } from './assignmentDetailInput.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 
 // Register the service
 registerSingleton(IStudentAssignmentsService, StudentAssignmentsService, InstantiationType.Delayed);
@@ -26,7 +27,7 @@ registerSingleton(IStudentAssignmentsService, StudentAssignmentsService, Instant
 const VIEW_CONTAINER: ViewContainer = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry).registerViewContainer({
 	id: STUDENT_ASSIGNMENTS_VIEW_CONTAINER_ID,
 	title: localize2('studentAssignments', "Assignments"),
-	icon: ThemeIcon.fromId('codicon codicon-book'),
+	icon: Codicon.book,
 	order: 5,
 	ctorDescriptor: new SyncDescriptor(StudentAssignmentsViewPaneContainer),
 	storageId: 'workbench.view.studentAssignments.state',
@@ -39,10 +40,11 @@ const viewsRegistry = Registry.as<IViewsRegistry>(ViewContainerExtensions.ViewsR
 viewsRegistry.registerViews([{
 	id: StudentAssignmentsView.ID,
 	name: localize2('courses', "My Courses"),
-	containerIcon: ThemeIcon.fromId('codicon codicon-book'),
+	containerIcon: Codicon.book,
 	canToggleVisibility: false,
 	canMoveView: false,
 	ctorDescriptor: new SyncDescriptor(StudentAssignmentsView),
+	when: ContextKeyExpr.has('studentAuthenticated'),
 	weight: 100
 }], VIEW_CONTAINER);
 

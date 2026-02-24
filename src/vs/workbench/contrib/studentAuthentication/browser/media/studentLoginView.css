@@ -136,8 +136,8 @@
 }
 
 .student-login-input-container .monaco-inputbox .ibwrapper input {
-	background: transparent;
-	color: #ffffff;
+	background: transparent !important;
+	color: #ffffff !important;
 	font-size: 14px;
 	padding: 9px 12px;
 }

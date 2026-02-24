@@ -22,7 +22,9 @@ import { IKeybindingService } from '../../../../platform/keybinding/common/keybi
 import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { append, $ } from '../../../../base/browser/dom.js';
+import { append, $, clearNode, getContentHeight, getContentWidth, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { Codicon } from '../../../../base/common/codicons.js';
+import { ThemeIcon } from '../../../../base/common/themables.js';
 import { WorkbenchAsyncDataTree } from '../../../../platform/list/browser/listService.js';
 import { IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { IAsyncDataSource, ITreeNode, ITreeRenderer } from '../../../../base/browser/ui/tree/tree.js';
@@ -32,9 +34,8 @@ import { localize } from '../../../../nls.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { CourseDetailInput } from './courseDetailInput.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { hasStoredStudentAuth } from '../../student/common/studentAuth.js';
+import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
 
 export const STUDENT_ASSIGNMENTS_VIEW_CONTAINER_ID = 'workbench.view.studentAssignments';
 
@@ -198,6 +199,9 @@ export class StudentAssignmentsView extends ViewPane {
 
 	private tree!: WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>;
 	private bodyContainer!: HTMLElement;
+	private treeCreationPending = false;
+	private _lastLayoutHeight = 0;
+	private _lastLayoutWidth = 0;
 
 	constructor(
 		options: IViewPaneOptions,
@@ -212,10 +216,36 @@ export class StudentAssignmentsView extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@IHoverService hoverService: IHoverService,
 		@IEditorService private readonly editorService: IEditorService,
-		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
-		@ICommandService private readonly commandService: ICommandService,
+		@ICommandService _commandService: ICommandService,
+		@IStudentAuthService private readonly authService: IStudentAuthService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
+
+		// Listen for auth state changes
+		this._register(this.authService.onDidAuthStateChange(state => {
+			console.log('[StudentAssignments] Auth state changed:', state);
+			if (state === AuthState.Authenticated) {
+				// Reload view when user logs in
+				this.refreshView();
+			} else if (state === AuthState.Unauthenticated) {
+				// Show login prompt when user logs out
+				this.showLoginPrompt();
+			}
+		}));
+
+		// React to course data changes so the view updates as soon as
+		// courses are fetched, even if that happens after the initial
+		// render.
+		this._register(this.assignmentsService.onDidChangeCourses(() => {
+			if (this.tree) {
+				this.tree.updateChildren();
+			} else if (this.bodyContainer) {
+				this.createTree();
+			} else {
+				// bodyContainer not set yet, defer tree creation
+				this.treeCreationPending = true;
+			}
+		}));
 	}
 
 	protected override renderBody(container: HTMLElement): void {
@@ -223,23 +253,43 @@ export class StudentAssignmentsView extends ViewPane {
 		container.classList.add('student-assignments-view');
 		this.bodyContainer = append(container, $('.student-assignments-root'));
 		void this.initialize();
+		// If tree creation was deferred because bodyContainer wasn't set, do it now
+		if (this.treeCreationPending) {
+			this.treeCreationPending = false;
+			this.createTree();
+		}
 	}
 
 	private async initialize(): Promise<void> {
-		const isAuthed = await hasStoredStudentAuth(this.secretStorageService);
-		if (!isAuthed) {
+		console.log('[StudentAssignments] Initializing view...');
+
+		// Wait for auth service to be ready
+		await this.authService.whenReady();
+
+		// Check if authenticated
+		if (this.authService.state !== AuthState.Authenticated) {
+			console.log('[StudentAssignments] Not authenticated, showing login prompt');
 			this.renderSignInPrompt();
 			return;
 		}
+
+		console.log('[StudentAssignments] Authenticated, loading courses...');
+
+		// Show a lightweight loading state while courses are being fetched
+		this.renderLoadingState();
+
+		// Load courses
 		const courses = await this.assignmentsService.getCourses();
-		if (!courses.length) {
-			this.renderEmptyState();
-			return;
+
+		// Only create the tree if bodyContainer is set
+		if (courses.length > 0 && !this.tree && this.bodyContainer) {
+			this.createTree();
 		}
-		this.createTree();
 	}
 
 	private createTree(): void {
+		// Clear any previous state (e.g., loading or empty messages)
+		clearNode(this.bodyContainer);
 		const treeContainer = append(this.bodyContainer, $('.student-assignments-tree'));
 		this.tree = this._register(this.instantiationService.createInstance(
 			WorkbenchAsyncDataTree<'root', StudentAssignmentsTreeElement, FuzzyScore>,
@@ -266,9 +316,22 @@ export class StudentAssignmentsView extends ViewPane {
 
 		this.tree.setInput('root');
 
-		this._register(this.assignmentsService.onDidChangeCourses(() => {
-			this.tree.updateChildren();
-		}));
+		// Tree is created asynchronously after data loads; layoutBody may have already run.
+		// Apply stored dimensions so the tree renders immediately without toggling the view.
+		if (this._lastLayoutHeight > 0 && this._lastLayoutWidth > 0) {
+			this.tree.layout(this._lastLayoutHeight, this._lastLayoutWidth);
+		} else {
+			// Fallback: layout hasn't run yet (e.g. view was hidden). Schedule layout on next frame.
+			this._register(scheduleAtNextAnimationFrame(getWindow(this.bodyContainer), () => {
+				if (this.tree) {
+					const h = getContentHeight(this.bodyContainer);
+					const w = getContentWidth(this.bodyContainer);
+					if (h > 0 && w > 0) {
+						this.tree.layout(h, w);
+					}
+				}
+			}));
+		}
 
 		this._register(this.tree.onDidOpen(e => {
 			const element = e.element;
@@ -279,28 +342,68 @@ export class StudentAssignmentsView extends ViewPane {
 	}
 
 	private renderSignInPrompt(): void {
-		const wrapper = append(this.bodyContainer, $('.student-auth-required'));
+		// Clear existing content
+		clearNode(this.bodyContainer);
+
+		const wrapper = append(this.bodyContainer, $('.student-auth-required.empty-state-signed-out'));
+		append(wrapper, $('span.empty-state-icon' + ThemeIcon.asCSSSelector(Codicon.book)));
 		const message = append(wrapper, $('.student-auth-message'));
 		message.textContent = localize('studentAuthRequiredCourses', "Sign in to your school account to view your courses.");
-		const button = append(wrapper, $('button.student-auth-button')) as HTMLButtonElement;
-		button.textContent = localize('studentAuthSignInButton', "Sign In");
-		button.addEventListener('click', async () => {
-			await this.commandService.executeCommand('student.signIn');
-			const authed = await hasStoredStudentAuth(this.secretStorageService);
-			if (authed) {
-				this.bodyContainer.innerHTML = '';
-				this.createTree();
-			}
-		});
+		const hint = append(wrapper, $('.student-auth-hint'));
+		hint.textContent = localize('studentAuthHint', "Not signed in yet");
 	}
 
-	private renderEmptyState(): void {
-		const wrapper = append(this.bodyContainer, $('.empty-state'));
-		wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	// private renderEmptyState(): void {
+	// 	// Clear existing content
+	// 	clearNode(this.bodyContainer);
+
+	// 	const wrapper = append(this.bodyContainer, $('.empty-state'));
+	// 	wrapper.textContent = localize('studentAssignmentsEmptyCourses', "No courses are available yet. Once your courses are set up, they'll appear here.");
+	// }
+
+	private renderLoadingState(): void {
+		// Clear existing content and show a simple loading indicator
+		clearNode(this.bodyContainer);
+
+		const wrapper = append(this.bodyContainer, $('.loading-state'));
+		wrapper.textContent = localize('studentAssignmentsLoadingCourses', "Loading your courses...");
+	}
+
+	// private renderErrorState(error: unknown): void {
+	// 	// Clear existing content
+	// 	clearNode(this.bodyContainer);
+
+	// 	const wrapper = append(this.bodyContainer, $('.error-state'));
+	// 	const message = append(wrapper, $('.error-message'));
+	// 	message.textContent = localize('studentAssignmentsError', "Failed to load courses. Please try again.");
+
+	// 	const errorDetails = append(wrapper, $('.error-details'));
+	// 	const errorMessage = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+	// 	errorDetails.textContent = errorMessage;
+
+	// 	const button = append(wrapper, $('button.retry-button')) as HTMLButtonElement;
+	// 	button.textContent = localize('studentAssignmentsRetry', "Retry");
+	// 	button.addEventListener('click', () => {
+	// 		this.refreshView();
+	// 	});
+	// }
+
+	private showLoginPrompt(): void {
+		// Clear existing content and show login prompt
+		clearNode(this.bodyContainer);
+		this.renderSignInPrompt();
+	}
+
+	private async refreshView(): Promise<void> {
+		console.log('[StudentAssignments] Refreshing view...');
+		clearNode(this.bodyContainer);
+		await this.initialize();
 	}
 
 	protected override layoutBody(height: number, width: number): void {
 		super.layoutBody(height, width);
+		this._lastLayoutHeight = height;
+		this._lastLayoutWidth = width;
 		if (this.tree) {
 			this.tree.layout(height, width);
 		}
@@ -314,7 +417,7 @@ export class StudentAssignmentsView extends ViewPane {
 	}
 
 	private openCourse(course: ICourse): void {
-		console.log(`OPEN COURSE - ${course.name}`);
+		console.log(`[StudentAssignments] Opening course: ${course.name}`);
 
 		const input = new CourseDetailInput(course);
 		this.editorService.openEditor(input, { pinned: true });

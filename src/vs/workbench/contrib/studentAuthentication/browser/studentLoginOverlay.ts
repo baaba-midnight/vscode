@@ -32,7 +32,11 @@ export function showStudentLoginOverlay(
 	overlay.appendChild(modal);
 
 	// Close helpers
+
+	// Only allow closing if authenticated
+	let canClose = false;
 	const close = (): void => {
+		if (!canClose) { return; }
 		disposables.dispose();
 		overlay.remove();
 	};
@@ -53,6 +57,8 @@ export function showStudentLoginOverlay(
 	modal.appendChild(closeButton);
 
 	closeButton.addEventListener('click', () => close());
+	// Disable close button until authenticated
+	closeButton.disabled = true;
 
 	overlay.addEventListener('click', event => {
 		if (event.target === overlay) {
@@ -150,8 +156,11 @@ export function showStudentLoginOverlay(
 		passwordInput.inputElement.readOnly = true;
 
 		try {
+			// Perform the login command; the command now opens and waits for views to initialize
 			await commandService.executeCommand('studentLogin.performLogin', { email, password });
-			// Clear fields and close on successful login once auth + preload complete
+			// Now allow closing and close
+			canClose = true;
+			closeButton.disabled = false;
 			emailInput.value = '';
 			passwordInput.value = '';
 			close();
