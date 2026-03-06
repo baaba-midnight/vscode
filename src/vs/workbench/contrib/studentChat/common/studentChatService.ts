@@ -12,7 +12,7 @@ import { Event, Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ApiClient, IApiResponse } from './apiClients.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+// import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IStudentAuthService, AuthState, STUDENT_AUTH_STUDENT_ID_KEY } from '../../studentAuthentication/common/studentAuth.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -119,14 +119,14 @@ export class StudentService extends Disposable implements IStudentService {
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
-		@ICommandService private readonly commandService: ICommandService,
+		// @ICommandService private readonly commandService: ICommandService,
 		@ISecretStorageService private readonly secretStorageService: ISecretStorageService,
 		@IStudentAuthService private readonly authService: IStudentAuthService,
 		@IStorageService private readonly storageService: IStorageService
 	) {
 		super();
-		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
-		this._apiClient = new ApiClient(this.commandService, baseURL);
+		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'https://capstone-api-t3k3.onrender.com/api';
+		this._apiClient = new ApiClient(baseURL);
 		// Don't initialize immediately - let it happen lazily
 
 		// Clear cache when user logs out so next login fetches fresh data

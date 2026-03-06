@@ -7,8 +7,8 @@ import { Event, Emitter } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { ApiClient } from '../../studentAuthentication/common/apiClients.js';
-import { CourseResponse, AssignmentResponse, AssignmentFile } from './types.js';
+import { ApiClient } from '../../studentAssignments/common/apiClients.js';
+import { CourseResponse, AssignmentResponse, AssignmentFile, ISubmissionFile } from './types.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
 import { joinPath } from '../../../../base/common/resources.js';
@@ -72,12 +72,6 @@ export interface IAssignmentFile {
 	type: string; // file extension
 	required: boolean;
 	downloadUrl: string;
-}
-
-export interface ISubmissionFile {
-	filename: string;
-	mimeType: string;
-	url: string;
 }
 
 export interface ISubmission {
@@ -156,7 +150,7 @@ export interface IStudentAssignmentsService {
 	/**
 	 * Submit an assignment
 	 */
-	submitAssignment(assignmentId: string, fileUris: string[]): Promise<void>;
+	submitAssignment(assignmentId: string, files: ISubmissionFile[]): Promise<void>;
 
 	/**
 	 * Get submission for an assignment
@@ -213,8 +207,8 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		@INotificationService private readonly notificationService: INotificationService,
 		@IStorageService private readonly storageService: IStorageService
 	) {
-		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'http://127.0.0.1:8000/api';
-		this.apiClient = new ApiClient(this.commandService, baseURL);
+		const baseURL = this.configurationService.getValue<string>('student.apiBaseUrl') || 'https://capstone-api-t3k3.onrender.com/api';
+		this.apiClient = new ApiClient(baseURL);
 
 		// Clear cache when user logs out so next login fetches fresh data
 		authService.onDidAuthStateChange(state => {
@@ -391,15 +385,53 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 		}
 	}
 
-	async submitAssignment(assignmentId: string, fileUris: string[]): Promise<void> {
+	async submitAssignment(assignmentId: string, files: ISubmissionFile[]): Promise<void> {
 		if (!await this.ensureAuthenticated()) {
 			return;
 		}
 
+		if (files.length === 0) {
+			this.notificationService.warn('No files selected for submission');
+			return;
+		}
+
 		try {
-			await withAuthRetry(this.authService, () => this.apiClient.post(`/student/assignments/${assignmentId}/submit`, {
-				file_uris: fileUris
-			}));
+			const formData = new FormData();
+
+			for (const file of files) {
+				console.log('[submit] file.filename:', file.filename);
+				console.log('[submit] file.bytes:', file.bytes);
+				console.log('[submit] file.bytes length:', file.bytes?.length);
+				console.log('[submit] file.mimeType:', file.mimeType);
+
+				if (!file.bytes) {
+					console.warn('[submit] SKIPPING file - bytes falsy:', file.filename);
+					continue;
+				}
+
+				const blob = new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: file.mimeType });
+				console.log('[submit] blob size:', blob.size);
+				formData.append('files', blob, file.filename);
+			}
+
+			// Verify FormData actually has entries
+			let entryCount = 0;
+			for (const [key, value] of formData.entries()) {
+				console.log('[submit] formData entry:', key, value);
+				entryCount++;
+			}
+			console.log('[submit] total formData entries:', entryCount);
+
+			const response = await withAuthRetry(this.authService, () =>
+				this.apiClient.postForm(`/student/assignments/${assignmentId}/submit`, formData)
+			);
+
+
+			if (!response.success || response.status !== 200) {
+				// show notification assignment failed to be submitted
+				this.notificationService.error('Failed to submit assignment. Please try again.');
+				return;
+			}
 
 			// Update local cache
 			const assignment = await this.getAssignment(assignmentId);
@@ -711,6 +743,7 @@ export class StudentAssignmentsService implements IStudentAssignmentsService {
 			gradedAt: submission.graded_at ? new Date(submission.graded_at) : null,
 			files: Array.isArray(submission.files)
 				? submission.files.map(file => ({
+					bytes: new Uint8Array(), // actual bytes would require downloading the file, which we can implement if needed
 					filename: String(file.filename),
 					mimeType: String(file.mime_type),
 					url: String(file.download_url)

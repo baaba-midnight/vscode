@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
+// import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 export interface IApiResponse<T = unknown> {
 	data: T;
@@ -15,12 +15,12 @@ export interface IApiResponse<T = unknown> {
 export class ApiClient {
 	private readonly baseUrl: string;
 	private readonly headers: Record<string, string>;
-	private readonly commandService: ICommandService;
+	// private readonly commandService: ICommandService;
 	private authToken: string | undefined;
 
-	constructor(commandService: ICommandService, baseUrl?: string) {
-		this.commandService = commandService;
-		this.baseUrl = baseUrl || 'http://127.0.0.1:8000/api';
+	constructor(baseUrl?: string) {
+		// this.commandService = commandService;
+		this.baseUrl = baseUrl || 'https://capstone-api-t3k3.onrender.com/api';
 		this.headers = {
 			'Content-Type': 'application/json',
 			'Accept': 'application/json',
@@ -39,32 +39,26 @@ export class ApiClient {
 		const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
 
 		const headers: Record<string, string> = { ...this.headers };
+
 		if (this.authToken) {
 			headers['Authorization'] = `Bearer ${this.authToken}`;
 		}
 
-		try {
-			// Call the extension host command
-			const result = await this.commandService.executeCommand<{ status: number; ok: boolean; data: unknown }>(
-				'student.api.request',
-				method,
-				url,
-				body,
-				headers
-			);
-			if (!result) {
-				throw new Error('API command not found or failed');
-			}
-
-			return {
-				data: result.data as T,
-				status: result.status,
-				success: result.ok,
-			};
-		} catch (error) {
-			console.error('API request error:', error);
-			throw error;
+		if (body && !(body instanceof FormData)) {
+			headers['Content-Type'] = 'application/json';
 		}
+
+		const response = await fetch(url, {
+			method,
+			headers,
+			body: body instanceof FormData ? body : JSON.stringify(body),
+		});
+
+		return {
+			data: (await response.json()) as T,
+			status: response.status,
+			success: response.ok,
+		};
 	}
 
 	async get<T>(endpoint: string): Promise<IApiResponse<T>> {

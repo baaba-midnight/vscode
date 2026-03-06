@@ -42,7 +42,7 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		@ICommandService private readonly commandService: ICommandService
 	) {
 		super();
-		this.apiClient = new ApiClient(commandService);
+		this.apiClient = new ApiClient();
 		console.log('[StudentAuth] Service initialized');
 	}
 

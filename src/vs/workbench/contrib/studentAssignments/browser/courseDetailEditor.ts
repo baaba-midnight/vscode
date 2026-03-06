@@ -28,6 +28,7 @@ import { localize } from '../../../../nls.js';
 import { IStudentService } from '../../studentChat/common/studentChatService.js';
 import { IStudentAuthService, AuthState } from '../../studentAuthentication/common/studentAuth.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 
 /**
  * Editor that displays course details and assignment cards
@@ -54,7 +55,8 @@ export class CourseDetailEditor extends EditorPane {
 		@ICommandService _commandService: ICommandService,
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IOpenerService private readonly openerService: IOpenerService,
-		@INotificationService private readonly notificationService: INotificationService
+		@INotificationService private readonly notificationService: INotificationService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super(CourseDetailEditor.ID, group, telemetryService, themeService, storageService);
 
@@ -551,10 +553,32 @@ export class CourseDetailEditor extends EditorPane {
 			return;
 		}
 
-		const fileUris = selection.map(uri => uri.toString());
-		await this.assignmentsService.submitAssignment(assignment.id, fileUris);
-		const input = this.input as CourseDetailInput;
-		this.setInput(input, {}, {}, CancellationToken.None);
+		// use fsPath for file system access
+		const files = await Promise.all(selection.map(async (uri) => {
+			const content = await this.fileService.readFile(uri);
+			const fileName = uri.path.split('/').pop() || 'file';
+			return {
+				bytes: new Uint8Array(content.value.buffer),
+				filename: fileName,
+				mimeType: 'application/octet-stream',
+				url: uri.toString()
+			};
+		}));
+
+		console.log('[CourseDetailEditor] Submitting assignment with files:', files);
+
+		try {
+			await this.assignmentsService.submitAssignment(assignment.id, files);
+			const input = this.input; // CourseDetailInput or AssignmentDetailInput
+
+			if (input) {
+				await this.setInput(input, {}, {}, CancellationToken.None);
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+			this.notificationService.error(`Failed to submit assignment: ${message}`);
+		}
+
 	}
 
 	private viewSubmission(assignment: IAssignment): void {

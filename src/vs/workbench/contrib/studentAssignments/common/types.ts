@@ -24,6 +24,13 @@ export interface AssignmentFile {
 	download_url: String; // optional
 }
 
+export interface ISubmissionFile {
+	bytes: Uint8Array;
+	filename: string;
+	mimeType: string;
+	url: string;
+}
+
 
 export interface AssignmentResponse {
 	id: String;
@@ -40,4 +47,8 @@ export interface AssignmentResponse {
 	course_name: String;
 	course_code: String;
 	files: AssignmentFile[];
+}
+
+export interface SubmissionRequest {
+	files: string[]; // array of file paths
 }
