@@ -23,12 +23,39 @@ export enum AuthState {
 	Unauthenticated = 'unauthenticated'
 }
 
-export interface IAuthContext {
-	authToken: string;
-	refreshToken?: string;
-	studentId?: string;
-	expiresAt?: number;
+export enum UserRole {
+	STUDENT = 'student',
+	INSTRUCTOR = 'instructor',
+	ADMIN = 'admin'
 }
+
+export interface UserBase {
+	user_id?: string;
+	access_token?: string;
+	name: string;
+	email: string;
+	role: UserRole;
+	created_at?: string;
+	refresh_token?: string;
+}
+
+
+export interface IAuthContext {
+	user: UserBase;
+	access_token: string;
+	token_type: string;
+	expiresAt: number;
+}
+export interface LoginResponse {
+	user: UserBase;
+	access_token: string;
+	token_type: string;
+	expires_in?: number;   // seconds until expiry
+	expiresAt?: number;    // absolute timestamp (ms)
+	student_id?: string;
+	refresh_token: string;
+}
+
 
 /*
 *Student Authentication service which will be fully implemented in
@@ -125,27 +152,35 @@ export async function loginStudent(
 	email: string,
 	password: string
 ): Promise<IAuthContext> {
-	const response = await apiClient.post<{
-		access_token: string;
-		refresh_token?: string;
-		student_id?: string;
-		expires_in?: number;
-	}>('/users/login', { email, password });
+	const response = await apiClient.post<LoginResponse>('/users/login', { email, password });
 
 	if (!response.success || !response.data) {
 		throw new Error('Login failed: Invalid credentials');
 	}
 
-	const authContext: IAuthContext = {
-		authToken: response.data.access_token,
-		refreshToken: response.data.refresh_token,
-		studentId: response.data.student_id,
-	};
+	const data = response.data;
 
-	// Calculate expiry time if provided
-	if (response.data.expires_in) {
-		authContext.expiresAt = Date.now() + (response.data.expires_in * 1000);
+	// Build user object: prefer full `user` from response, otherwise construct minimal one
+	const user: UserBase = data.user;
+
+	// Compute expiresAt as an absolute timestamp in milliseconds.
+	// Prefer `expires_in` (seconds until expiry) if provided, otherwise use `expiresAt` if backend returned it.
+	let expiresAt: number;
+	if (typeof data.expires_in === 'number') {
+		expiresAt = Date.now() + data.expires_in * 1000;
+	} else if (typeof data.expiresAt === 'number') {
+		expiresAt = data.expiresAt;
+	} else {
+		// Fallback: set to now (caller can treat as no-expiry info)
+		expiresAt = Date.now();
 	}
+
+	const authContext: IAuthContext = {
+		user,
+		access_token: data.access_token,
+		token_type: data.token_type ?? 'bearer',
+		expiresAt
+	};
 
 	return authContext;
 }
