@@ -119,6 +119,9 @@ import './contrib/codeEditor/electron-browser/codeEditor.contribution.js';
 // Debug
 import './contrib/debug/electron-browser/extensionHostDebugService.js';
 
+// Student Integration - Policy
+import './contrib/studentPolicy/browser/studentPolicy.contribution.js';
+
 // Extensions Management
 import './contrib/extensions/electron-browser/extensions.contribution.js';
 
@@ -170,17 +173,14 @@ import './contrib/multiDiffEditor/browser/multiDiffEditor.contribution.js';
 // Remote Tunnel
 import './contrib/remoteTunnel/electron-browser/remoteTunnel.contribution.js';
 
-// Chat
-import './contrib/chat/electron-browser/chat.contribution.js';
-import './contrib/inlineChat/electron-browser/inlineChat.contribution.js';
+// Chat/Agent disabled for student build
 // Encryption
 import './contrib/encryption/electron-browser/encryption.contribution.js';
 
 // Emergency Alert
 import './contrib/emergencyAlert/electron-browser/emergencyAlert.contribution.js';
 
-// MCP
-import './contrib/mcp/electron-browser/mcp.contribution.js';
+// MCP disabled for student build
 
 // Policy Export
 import './contrib/policyExport/electron-browser/policyExport.contribution.js';

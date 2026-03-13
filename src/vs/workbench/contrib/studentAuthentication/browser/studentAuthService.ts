@@ -33,6 +33,8 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 	private _studentId: string | undefined;
 	private _initPromise: Promise<void> | undefined;
 
+	private _reloadPromise: Promise<void> | undefined;
+
 	private readonly _onDidAuthStateChange = this._register(new Emitter<AuthState>());
 	readonly onDidAuthStateChange: Event<AuthState> = this._onDidAuthStateChange.event;
 
@@ -45,6 +47,18 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		super();
 		this.apiClient = new ApiClient();
 		console.log('[StudentAuth] Service initialized');
+
+		// Listen for secret storage changes so multiple windows/processes
+		// can pick up auth state updates immediately.
+		this._register(this.secretStorage.onDidChangeSecret(async (key: string) => {
+			if (key === STUDENT_AUTH_TOKEN_KEY || key === STUDENT_AUTH_REFRESH_TOKEN_KEY || key === STUDENT_AUTH_STUDENT_ID_KEY) {
+				try {
+					await this.reloadTokens();
+				} catch (e) {
+					console.error('[StudentAuth] reloadTokens error:', e);
+				}
+			}
+		}));
 	}
 
 	get state(): AuthState {
@@ -106,6 +120,62 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 	}
 
 	/**
+	 * Reload tokens from the secret storage and update in-memory state.
+	 * This is guarded to avoid concurrent reloads.
+	 */
+	private async reloadTokens(): Promise<void> {
+		if (this._reloadPromise) {
+			return this._reloadPromise;
+		}
+
+		this._reloadPromise = (async () => {
+			console.log('[StudentAuth] Reloading tokens from secret storage');
+			try {
+				const access = await this.secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
+				const refresh = await this.secretStorage.get(STUDENT_AUTH_REFRESH_TOKEN_KEY);
+				const sid = await this.secretStorage.get(STUDENT_AUTH_STUDENT_ID_KEY);
+
+				this._accessToken = access;
+				this._refreshToken = refresh;
+				this._studentId = sid;
+
+				if (this._accessToken) {
+					if (isTokenExpired(this._accessToken)) {
+						console.log('[StudentAuth] Reloaded access token is expired, attempting refresh...');
+						const refreshed = await this.refreshAccessToken();
+						if (!refreshed) {
+							this.apiClient.removeAuthToken();
+							this.setState(AuthState.Unauthenticated);
+							return;
+						}
+						this.setState(AuthState.Authenticated);
+					} else {
+						this.apiClient.setAuthToken(this._accessToken);
+						this.setState(AuthState.Authenticated);
+					}
+				} else if (this._refreshToken) {
+					// No access token but have refresh token: try refresh
+					const refreshed = await this.refreshAccessToken();
+					if (refreshed) {
+						this.setState(AuthState.Authenticated);
+						return;
+					}
+					this.apiClient.removeAuthToken();
+					this.setState(AuthState.Unauthenticated);
+				} else {
+					// No auth present
+					this.apiClient.removeAuthToken();
+					this.setState(AuthState.Unauthenticated);
+				}
+			} finally {
+				this._reloadPromise = undefined;
+			}
+		})();
+
+		return this._reloadPromise;
+	}
+
+	/**
 	 * Get a valid access token, refreshing if necessary
 	 */
 	async getValidAccessToken(): Promise<string | undefined> {
@@ -146,6 +216,18 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 
 			console.log('[StudentAuth] Login successful');
 			this.setState(AuthState.Authenticated);
+
+			// Full workbench reload to ensure all windows and components pick up
+			// the new authentication state (behaves like Ctrl+R). This avoids
+			// stale in-memory state in long-lived components. Keep it delayed
+			// briefly to allow storage writes to flush.
+			try {
+				setTimeout(() => {
+					void this.commandService.executeCommand('workbench.action.reloadWindow');
+				}, 150);
+			} catch (e) {
+				console.error('[StudentAuth] Failed to reload window after login:', e);
+			}
 
 			return authContext;
 		} catch (error) {
@@ -244,6 +326,12 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			await this.clearTokens();
 			this.setState(AuthState.Unauthenticated);
 			console.log('[StudentAuth] Logout complete');
+			// Open the sign-in overlay so the user can re-authenticate immediately
+			try {
+				this.commandService.executeCommand('student.signIn');
+			} catch (e) {
+				console.error('[StudentAuth] Failed to open sign-in overlay after logout:', e);
+			}
 		}
 	}
 
