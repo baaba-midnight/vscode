@@ -16,6 +16,9 @@ import {
 	STUDENT_AUTH_TOKEN_KEY,
 	STUDENT_AUTH_REFRESH_TOKEN_KEY,
 	STUDENT_AUTH_STUDENT_ID_KEY,
+	STUDENT_AUTH_STUDENT_NAME_KEY,
+	STUDENT_AUTH_STUDENT_EMAIL_KEY,
+	decodeJWT,
 	isTokenExpired,
 	loginStudent
 } from '../common/studentAuth.js';
@@ -31,6 +34,8 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 	private _accessToken: string | undefined;
 	private _refreshToken: string | undefined;
 	private _studentId: string | undefined;
+	private _studentName: string | undefined;
+	private _studentEmail: string | undefined;
 	private _initPromise: Promise<void> | undefined;
 
 	private _reloadPromise: Promise<void> | undefined;
@@ -51,7 +56,13 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		// Listen for secret storage changes so multiple windows/processes
 		// can pick up auth state updates immediately.
 		this._register(this.secretStorage.onDidChangeSecret(async (key: string) => {
-			if (key === STUDENT_AUTH_TOKEN_KEY || key === STUDENT_AUTH_REFRESH_TOKEN_KEY || key === STUDENT_AUTH_STUDENT_ID_KEY) {
+			if (
+				key === STUDENT_AUTH_TOKEN_KEY
+				|| key === STUDENT_AUTH_REFRESH_TOKEN_KEY
+				|| key === STUDENT_AUTH_STUDENT_ID_KEY
+				|| key === STUDENT_AUTH_STUDENT_NAME_KEY
+				|| key === STUDENT_AUTH_STUDENT_EMAIL_KEY
+			) {
 				try {
 					await this.reloadTokens();
 				} catch (e) {
@@ -67,6 +78,14 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 
 	get studentId(): string | undefined {
 		return this._studentId;
+	}
+
+	get studentName(): string | undefined {
+		return this._studentName;
+	}
+
+	get studentEmail(): string | undefined {
+		return this._studentEmail;
 	}
 
 	/**
@@ -90,6 +109,9 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			this._accessToken = await this.secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
 			this._refreshToken = await this.secretStorage.get(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 			this._studentId = await this.secretStorage.get(STUDENT_AUTH_STUDENT_ID_KEY);
+			this._studentName = await this.secretStorage.get(STUDENT_AUTH_STUDENT_NAME_KEY);
+			this._studentEmail = await this.secretStorage.get(STUDENT_AUTH_STUDENT_EMAIL_KEY);
+			await this.hydrateIdentityFromToken();
 
 			if (this._accessToken) {
 				// Check if token is expired
@@ -134,10 +156,15 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 				const access = await this.secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
 				const refresh = await this.secretStorage.get(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 				const sid = await this.secretStorage.get(STUDENT_AUTH_STUDENT_ID_KEY);
+				const sname = await this.secretStorage.get(STUDENT_AUTH_STUDENT_NAME_KEY);
+				const semail = await this.secretStorage.get(STUDENT_AUTH_STUDENT_EMAIL_KEY);
 
 				this._accessToken = access;
 				this._refreshToken = refresh;
 				this._studentId = sid;
+				this._studentName = sname;
+				this._studentEmail = semail;
+				await this.hydrateIdentityFromToken();
 
 				if (this._accessToken) {
 					if (isTokenExpired(this._accessToken)) {
@@ -288,6 +315,14 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 				this._studentId = user.user_id;
 				await this.secretStorage.set(STUDENT_AUTH_STUDENT_ID_KEY, user.user_id);
 			}
+			if (user && user.name) {
+				this._studentName = user.name;
+				await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, user.name);
+			}
+			if (user && user.email) {
+				this._studentEmail = user.email;
+				await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, user.email);
+			}
 
 			// Persist tokens
 			await this.secretStorage.set(STUDENT_AUTH_TOKEN_KEY, this._accessToken);
@@ -350,6 +385,8 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		this._accessToken = authContext.access_token;
 		this._refreshToken = authContext.user.refresh_token;
 		this._studentId = authContext.user.user_id;
+		this._studentName = authContext.user.name;
+		this._studentEmail = authContext.user.email;
 
 		await this.secretStorage.set(STUDENT_AUTH_TOKEN_KEY, authContext.access_token);
 
@@ -359,6 +396,14 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 
 		if (authContext.user.user_id) {
 			await this.secretStorage.set(STUDENT_AUTH_STUDENT_ID_KEY, authContext.user.user_id);
+		}
+
+		if (authContext.user.name) {
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, authContext.user.name);
+		}
+
+		if (authContext.user.email) {
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, authContext.user.email);
 		}
 
 		// Set token in API client
@@ -372,12 +417,46 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		this._accessToken = undefined;
 		this._refreshToken = undefined;
 		this._studentId = undefined;
+		this._studentName = undefined;
+		this._studentEmail = undefined;
 
 		await this.secretStorage.delete(STUDENT_AUTH_TOKEN_KEY);
 		await this.secretStorage.delete(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_ID_KEY);
+		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_NAME_KEY);
+		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_EMAIL_KEY);
 
 		this.apiClient.removeAuthToken();
+	}
+
+	private async hydrateIdentityFromToken(): Promise<void> {
+		if (!this._accessToken) {
+			return;
+		}
+
+		const payload = decodeJWT(this._accessToken) as Record<string, unknown>;
+		const tokenName = this.pickString(payload, ['name', 'full_name', 'preferred_username']);
+		const tokenEmail = this.pickString(payload, ['email', 'upn']);
+
+		if (!this._studentName && tokenName) {
+			this._studentName = tokenName;
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, tokenName);
+		}
+
+		if (!this._studentEmail && tokenEmail) {
+			this._studentEmail = tokenEmail;
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, tokenEmail);
+		}
+	}
+
+	private pickString(payload: Record<string, unknown>, keys: string[]): string | undefined {
+		for (const key of keys) {
+			const value = payload[key];
+			if (typeof value === 'string' && value.trim().length > 0) {
+				return value;
+			}
+		}
+		return undefined;
 	}
 
 	/**

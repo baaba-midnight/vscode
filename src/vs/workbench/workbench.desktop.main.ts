@@ -188,6 +188,9 @@ import './contrib/policyExport/electron-browser/policyExport.contribution.js';
 // Student Integration - Authentication
 import './contrib/studentAuthentication/browser/studentAuthentication.contribution.js';
 
+// Student Integration - Profile (Native Accounts Menu)
+import './contrib/studentProfile/browser/studentProfile.contribution.js';
+
 // Student Integration - AI CHAT
 import './contrib/studentChat/browser/studentChat.contribution.js';
 

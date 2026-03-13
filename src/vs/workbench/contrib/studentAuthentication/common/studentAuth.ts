@@ -15,6 +15,8 @@ export const IStudentAuthService = createDecorator<IStudentAuthService>('student
 export const STUDENT_AUTH_TOKEN_KEY = 'student-auth-token';
 export const STUDENT_AUTH_REFRESH_TOKEN_KEY = 'student-auth-refresh-token';
 export const STUDENT_AUTH_STUDENT_ID_KEY = 'student-auth-student-id';
+export const STUDENT_AUTH_STUDENT_NAME_KEY = 'student-auth-student-name';
+export const STUDENT_AUTH_STUDENT_EMAIL_KEY = 'student-auth-student-email';
 
 // define authentication states
 export enum AuthState {
@@ -69,6 +71,8 @@ export interface IStudentAuthService {
 
 	/** current student id, if known */
 	readonly studentId: string | undefined;
+	readonly studentName: string | undefined;
+	readonly studentEmail: string | undefined;
 
 	/*
 	* event fired with the state changes
