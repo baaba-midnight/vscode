@@ -201,7 +201,16 @@ import './contrib/notebook/browser/notebook.contribution.js';
 // Speech
 import './contrib/speech/browser/speech.contribution.js';
 
-// Chat/Agent disabled for student build
+// Chat
+import './contrib/chat/browser/chat.contribution.js';
+import './contrib/chat/browser/chatContext.contribution.js';
+import './contrib/chat/browser/chatSessions.contribution.js';
+
+// Inline Chat
+import './contrib/inlineChat/browser/inlineChat.contribution.js';
+
+// MCP
+import './contrib/mcp/browser/mcp.contribution.js';
 
 // Interactive
 import './contrib/interactive/browser/interactive.contribution.js';

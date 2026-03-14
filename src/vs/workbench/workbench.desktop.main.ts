@@ -173,14 +173,20 @@ import './contrib/multiDiffEditor/browser/multiDiffEditor.contribution.js';
 // Remote Tunnel
 import './contrib/remoteTunnel/electron-browser/remoteTunnel.contribution.js';
 
-// Chat/Agent disabled for student build
+// Chat
+import './contrib/chat/electron-browser/chat.contribution.js';
+
+// Inline Chat
+import './contrib/inlineChat/electron-browser/inlineChat.contribution.js';
+
+// MCP
+import './contrib/mcp/electron-browser/mcp.contribution.js';
+
 // Encryption
 import './contrib/encryption/electron-browser/encryption.contribution.js';
 
 // Emergency Alert
 import './contrib/emergencyAlert/electron-browser/emergencyAlert.contribution.js';
-
-// MCP disabled for student build
 
 // Policy Export
 import './contrib/policyExport/electron-browser/policyExport.contribution.js';
@@ -191,7 +197,7 @@ import './contrib/studentAuthentication/browser/studentAuthentication.contributi
 // Student Integration - Profile (Native Accounts Menu)
 import './contrib/studentProfile/browser/studentProfile.contribution.js';
 
-// Student Integration - AI CHAT
+// Student Integration - Chat
 import './contrib/studentChat/browser/studentChat.contribution.js';
 
 // Student Integration - Assignments

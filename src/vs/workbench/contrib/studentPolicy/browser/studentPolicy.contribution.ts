@@ -4,9 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize2 } from '../../../../nls.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
+import { RawContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Extensions as ConfigExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { DEFAULT_ALLOWED_EXTENSIONS, STUDENT_ALLOWLIST_MODE_SETTING, STUDENT_ALLOWLIST_SETTING } from '../common/defaults.js';
 import { IStudentPolicyService } from '../common/studentPolicy.js';
 import { StudentPolicyService } from '../common/studentPolicyService.js';
@@ -39,5 +42,37 @@ Registry.as<IConfigurationRegistry>(ConfigExtensions.Configuration).registerConf
 });
 
 registerSingleton(IStudentPolicyService, StudentPolicyService, InstantiationType.Delayed);
+
+const StudentModeContext = new RawContextKey<boolean>('studentMode', false);
+
+class StudentModeContextContribution extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.studentModeContext';
+
+	private readonly studentModeContextKey = StudentModeContext.bindTo(this.contextKeyService);
+
+	constructor(
+		@IStudentPolicyService private readonly studentPolicyService: IStudentPolicyService,
+		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+	) {
+		super();
+
+		this.updateStudentModeContext();
+
+		this._register(this.studentPolicyService.onDidChangePolicy(() => {
+			this.updateStudentModeContext();
+		}));
+	}
+
+	private updateStudentModeContext(): void {
+		this.studentModeContextKey.set(this.studentPolicyService.isStudentModeEnabled());
+	}
+}
+
+registerWorkbenchContribution2(
+	StudentModeContextContribution.ID,
+	StudentModeContextContribution,
+	WorkbenchPhase.BlockStartup
+);
 
 console.log('[StudentPolicy] Registration complete');
