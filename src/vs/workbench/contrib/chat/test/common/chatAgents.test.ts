@@ -4,12 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { Event } from '../../../../../base/common/event.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ContextKeyExpression } from '../../../../../platform/contextkey/common/contextkey.js';
 import { ExtensionIdentifier } from '../../../../../platform/extensions/common/extensions.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { ChatAgentService, IChatAgentData, IChatAgentImplementation } from '../../common/chatAgents.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { IStudentPolicyService } from '../../../studentPolicy/common/studentPolicy.js';
 
 const testAgentId = 'testAgent';
 const testAgentData: IChatAgentData = {
@@ -39,12 +41,19 @@ class TestingContextKeyService extends MockContextKeyService {
 
 suite('ChatAgents', function () {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
+	const studentPolicyService: IStudentPolicyService = {
+		_serviceBrand: undefined,
+		onDidChangePolicy: Event.None,
+		isStudentModeEnabled: () => false,
+		getAllowedExtensions: () => [],
+		isExtensionAllowed: () => true,
+	};
 
 	let chatAgentService: ChatAgentService;
 	let contextKeyService: TestingContextKeyService;
 	setup(() => {
 		contextKeyService = new TestingContextKeyService();
-		chatAgentService = store.add(new ChatAgentService(contextKeyService, new TestConfigurationService()));
+		chatAgentService = store.add(new ChatAgentService(contextKeyService, new TestConfigurationService(), studentPolicyService));
 	});
 
 	test('registerAgent', async () => {

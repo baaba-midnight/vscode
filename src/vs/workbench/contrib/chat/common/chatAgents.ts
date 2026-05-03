@@ -24,6 +24,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { asJson, IRequestService } from '../../../../platform/request/common/request.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IStudentPolicyService } from '../../studentPolicy/common/studentPolicy.js';
 import { ChatContextKeys } from './chatContextKeys.js';
 import { IChatAgentEditedFileEvent, IChatProgressHistoryResponseContent, IChatRequestModeInstructions, IChatRequestVariableData, ISerializableChatAgentData } from './chatModel.js';
 import { IRawChatCommandContribution } from './chatParticipantContribTypes.js';
@@ -266,6 +267,7 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 	constructor(
 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IStudentPolicyService private readonly studentPolicyService: IStudentPolicyService,
 	) {
 		super();
 		this._hasDefaultAgent = ChatContextKeys.enabled.bindTo(this.contextKeyService);
@@ -458,6 +460,10 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 	 * Returns all agent datas that exist- static registered and dynamic ones.
 	 */
 	getAgents(): IChatAgentData[] {
+		if (this.studentPolicyService.isStudentModeEnabled()) {
+			return [];
+		}
+
 		return Array.from(this._agents.values())
 			.map(entry => entry.data)
 			.filter(a => this._agentIsEnabled(a.id));
@@ -494,6 +500,10 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 	}
 
 	async invokeAgent(id: string, request: IChatAgentRequest, progress: (parts: IChatProgress[]) => void, history: IChatAgentHistoryEntry[], token: CancellationToken): Promise<IChatAgentResult> {
+		if (this.studentPolicyService.isStudentModeEnabled()) {
+			throw new Error('Agent sessions are disabled in student mode');
+		}
+
 		const data = this._agents.get(id);
 		if (!data?.impl) {
 			throw new Error(`No activated agent with id "${id}"`);
@@ -503,6 +513,10 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 	}
 
 	setRequestTools(id: string, requestId: string, tools: UserSelectedTools): void {
+		if (this.studentPolicyService.isStudentModeEnabled()) {
+			return;
+		}
+
 		const data = this._agents.get(id);
 		if (!data?.impl) {
 			throw new Error(`No activated agent with id "${id}"`);

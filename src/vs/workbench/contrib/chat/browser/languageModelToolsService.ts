@@ -32,6 +32,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
+import { IStudentPolicyService } from '../../studentPolicy/common/studentPolicy.js';
 import { ChatContextKeys } from '../common/chatContextKeys.js';
 import { ChatModel } from '../common/chatModel.js';
 import { IVariableReference } from '../common/chatModes.js';
@@ -105,6 +106,7 @@ export class LanguageModelToolsService extends Disposable implements ILanguageMo
 		@IAccessibilitySignalService private readonly _accessibilitySignalService: IAccessibilitySignalService,
 		@IStorageService private readonly _storageService: IStorageService,
 		@ILanguageModelToolsConfirmationService private readonly _confirmationService: ILanguageModelToolsConfirmationService,
+		@IStudentPolicyService private readonly _studentPolicyService: IStudentPolicyService,
 	) {
 		super();
 
@@ -202,6 +204,10 @@ export class LanguageModelToolsService extends Disposable implements ILanguageMo
 	}
 
 	getTools(includeDisabled?: boolean): Iterable<Readonly<IToolData>> {
+		if (this._studentPolicyService.isStudentModeEnabled()) {
+			return [];
+		}
+
 		const toolDatas = Iterable.map(this._tools.values(), i => i.data);
 		const extensionToolsEnabled = this._configurationService.getValue<boolean>(ChatConfiguration.ExtensionToolsEnabled);
 		return Iterable.filter(
@@ -236,6 +242,15 @@ export class LanguageModelToolsService extends Disposable implements ILanguageMo
 	}
 
 	async invokeTool(dto: IToolInvocation, countTokens: CountTokensCallback, token: CancellationToken): Promise<IToolResult> {
+		if (this._studentPolicyService.isStudentModeEnabled()) {
+			return {
+				content: [{
+					kind: 'text',
+					value: 'Tool execution is disabled in student mode'
+				}]
+			};
+		}
+
 		this._logService.trace(`[LanguageModelToolsService#invokeTool] Invoking tool ${dto.toolId} with parameters ${JSON.stringify(dto.parameters)}`);
 
 		// When invoking a tool, don't validate the "when" clause. An extension may have invoked a tool just as it was becoming disabled, and just let it go through rather than throw and break the chat.

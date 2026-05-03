@@ -11,10 +11,14 @@ import { ApiClient } from '../common/apiClients.js';
 import {
 	IStudentAuthService,
 	IAuthContext,
+	LoginResponse,
 	AuthState,
 	STUDENT_AUTH_TOKEN_KEY,
 	STUDENT_AUTH_REFRESH_TOKEN_KEY,
 	STUDENT_AUTH_STUDENT_ID_KEY,
+	STUDENT_AUTH_STUDENT_NAME_KEY,
+	STUDENT_AUTH_STUDENT_EMAIL_KEY,
+	decodeJWT,
 	isTokenExpired,
 	loginStudent
 } from '../common/studentAuth.js';
@@ -30,7 +34,11 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 	private _accessToken: string | undefined;
 	private _refreshToken: string | undefined;
 	private _studentId: string | undefined;
+	private _studentName: string | undefined;
+	private _studentEmail: string | undefined;
 	private _initPromise: Promise<void> | undefined;
+
+	private _reloadPromise: Promise<void> | undefined;
 
 	private readonly _onDidAuthStateChange = this._register(new Emitter<AuthState>());
 	readonly onDidAuthStateChange: Event<AuthState> = this._onDidAuthStateChange.event;
@@ -44,6 +52,24 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		super();
 		this.apiClient = new ApiClient();
 		console.log('[StudentAuth] Service initialized');
+
+		// Listen for secret storage changes so multiple windows/processes
+		// can pick up auth state updates immediately.
+		this._register(this.secretStorage.onDidChangeSecret(async (key: string) => {
+			if (
+				key === STUDENT_AUTH_TOKEN_KEY
+				|| key === STUDENT_AUTH_REFRESH_TOKEN_KEY
+				|| key === STUDENT_AUTH_STUDENT_ID_KEY
+				|| key === STUDENT_AUTH_STUDENT_NAME_KEY
+				|| key === STUDENT_AUTH_STUDENT_EMAIL_KEY
+			) {
+				try {
+					await this.reloadTokens();
+				} catch (e) {
+					console.error('[StudentAuth] reloadTokens error:', e);
+				}
+			}
+		}));
 	}
 
 	get state(): AuthState {
@@ -52,6 +78,14 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 
 	get studentId(): string | undefined {
 		return this._studentId;
+	}
+
+	get studentName(): string | undefined {
+		return this._studentName;
+	}
+
+	get studentEmail(): string | undefined {
+		return this._studentEmail;
 	}
 
 	/**
@@ -75,6 +109,9 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			this._accessToken = await this.secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
 			this._refreshToken = await this.secretStorage.get(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 			this._studentId = await this.secretStorage.get(STUDENT_AUTH_STUDENT_ID_KEY);
+			this._studentName = await this.secretStorage.get(STUDENT_AUTH_STUDENT_NAME_KEY);
+			this._studentEmail = await this.secretStorage.get(STUDENT_AUTH_STUDENT_EMAIL_KEY);
+			await this.hydrateIdentityFromToken();
 
 			if (this._accessToken) {
 				// Check if token is expired
@@ -102,6 +139,67 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			console.error('[StudentAuth] Initialization failed:', error);
 			this.setState(AuthState.Unauthenticated);
 		}
+	}
+
+	/**
+	 * Reload tokens from the secret storage and update in-memory state.
+	 * This is guarded to avoid concurrent reloads.
+	 */
+	private async reloadTokens(): Promise<void> {
+		if (this._reloadPromise) {
+			return this._reloadPromise;
+		}
+
+		this._reloadPromise = (async () => {
+			console.log('[StudentAuth] Reloading tokens from secret storage');
+			try {
+				const access = await this.secretStorage.get(STUDENT_AUTH_TOKEN_KEY);
+				const refresh = await this.secretStorage.get(STUDENT_AUTH_REFRESH_TOKEN_KEY);
+				const sid = await this.secretStorage.get(STUDENT_AUTH_STUDENT_ID_KEY);
+				const sname = await this.secretStorage.get(STUDENT_AUTH_STUDENT_NAME_KEY);
+				const semail = await this.secretStorage.get(STUDENT_AUTH_STUDENT_EMAIL_KEY);
+
+				this._accessToken = access;
+				this._refreshToken = refresh;
+				this._studentId = sid;
+				this._studentName = sname;
+				this._studentEmail = semail;
+				await this.hydrateIdentityFromToken();
+
+				if (this._accessToken) {
+					if (isTokenExpired(this._accessToken)) {
+						console.log('[StudentAuth] Reloaded access token is expired, attempting refresh...');
+						const refreshed = await this.refreshAccessToken();
+						if (!refreshed) {
+							this.apiClient.removeAuthToken();
+							this.setState(AuthState.Unauthenticated);
+							return;
+						}
+						this.setState(AuthState.Authenticated);
+					} else {
+						this.apiClient.setAuthToken(this._accessToken);
+						this.setState(AuthState.Authenticated);
+					}
+				} else if (this._refreshToken) {
+					// No access token but have refresh token: try refresh
+					const refreshed = await this.refreshAccessToken();
+					if (refreshed) {
+						this.setState(AuthState.Authenticated);
+						return;
+					}
+					this.apiClient.removeAuthToken();
+					this.setState(AuthState.Unauthenticated);
+				} else {
+					// No auth present
+					this.apiClient.removeAuthToken();
+					this.setState(AuthState.Unauthenticated);
+				}
+			} finally {
+				this._reloadPromise = undefined;
+			}
+		})();
+
+		return this._reloadPromise;
 	}
 
 	/**
@@ -146,6 +244,18 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			console.log('[StudentAuth] Login successful');
 			this.setState(AuthState.Authenticated);
 
+			// Full workbench reload to ensure all windows and components pick up
+			// the new authentication state (behaves like Ctrl+R). This avoids
+			// stale in-memory state in long-lived components. Keep it delayed
+			// briefly to allow storage writes to flush.
+			try {
+				setTimeout(() => {
+					void this.commandService.executeCommand('workbench.action.reloadWindow');
+				}, 150);
+			} catch (e) {
+				console.error('[StudentAuth] Failed to reload window after login:', e);
+			}
+
 			return authContext;
 		} catch (error) {
 			console.error('[StudentAuth] Login failed:', error);
@@ -164,13 +274,11 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		}
 
 		try {
-			console.log('[StudentAuth] Refreshing access token...');
+			console.log('[StudentAuth] Refreshing access token via backend...');
 
-			const response = await this.apiClient.post<{
-				access_token: string;
-				refresh_token?: string;
-				expires_in?: number;
-			}>('/auth/refresh', {
+			// Call backend refresh endpoint. Backend returns the same shape as login:
+			// { user: { user_id, refresh_token, ... }, access_token, token_type }
+			const response = await this.apiClient.post<LoginResponse>('/users/refresh', {
 				refresh_token: this._refreshToken
 			});
 
@@ -181,13 +289,42 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 				return false;
 			}
 
-			// Update tokens
-			this._accessToken = response.data.access_token;
-			if (response.data.refresh_token) {
-				this._refreshToken = response.data.refresh_token;
+			const data = response.data;
+
+			// Accept either direct access_token or login-shaped response
+			const newAccessToken: string | undefined = data.access_token;
+			const newRefreshToken: string | undefined = data.refresh_token || (data.user && data.user.refresh_token);
+
+			console.log(`[STUDENT AUTH SERVICE - NEW REFRESH TOKEN] - ${newRefreshToken}`);
+
+			const user = data.user;
+
+			if (!newAccessToken) {
+				console.error('[StudentAuth] Refresh response missing access token');
+				await this.clearTokens();
+				this.setState(AuthState.Unauthenticated);
+				return false;
 			}
 
-			// Store updated tokens
+			// Update memory
+			this._accessToken = newAccessToken;
+			if (newRefreshToken) {
+				this._refreshToken = newRefreshToken;
+			}
+			if (user && user.user_id) {
+				this._studentId = user.user_id;
+				await this.secretStorage.set(STUDENT_AUTH_STUDENT_ID_KEY, user.user_id);
+			}
+			if (user && user.name) {
+				this._studentName = user.name;
+				await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, user.name);
+			}
+			if (user && user.email) {
+				this._studentEmail = user.email;
+				await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, user.email);
+			}
+
+			// Persist tokens
 			await this.secretStorage.set(STUDENT_AUTH_TOKEN_KEY, this._accessToken);
 			if (this._refreshToken) {
 				await this.secretStorage.set(STUDENT_AUTH_REFRESH_TOKEN_KEY, this._refreshToken);
@@ -196,7 +333,7 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			// Update API client
 			this.apiClient.setAuthToken(this._accessToken);
 
-			console.log('[StudentAuth] Token refresh successful');
+			console.log('[StudentAuth] Token refresh successful (backend)');
 			this.setState(AuthState.Authenticated);
 			return true;
 		} catch (error) {
@@ -224,6 +361,12 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 			await this.clearTokens();
 			this.setState(AuthState.Unauthenticated);
 			console.log('[StudentAuth] Logout complete');
+			// Open the sign-in overlay so the user can re-authenticate immediately
+			try {
+				this.commandService.executeCommand('student.signIn');
+			} catch (e) {
+				console.error('[StudentAuth] Failed to open sign-in overlay after logout:', e);
+			}
 		}
 	}
 
@@ -239,22 +382,32 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 	 * Store authentication context in secure storage
 	 */
 	private async storeAuthContext(authContext: IAuthContext): Promise<void> {
-		this._accessToken = authContext.authToken;
-		this._refreshToken = authContext.refreshToken;
-		this._studentId = authContext.studentId;
+		this._accessToken = authContext.access_token;
+		this._refreshToken = authContext.user.refresh_token;
+		this._studentId = authContext.user.user_id;
+		this._studentName = authContext.user.name;
+		this._studentEmail = authContext.user.email;
 
-		await this.secretStorage.set(STUDENT_AUTH_TOKEN_KEY, authContext.authToken);
+		await this.secretStorage.set(STUDENT_AUTH_TOKEN_KEY, authContext.access_token);
 
-		if (authContext.refreshToken) {
-			await this.secretStorage.set(STUDENT_AUTH_REFRESH_TOKEN_KEY, authContext.refreshToken);
+		if (authContext.user.refresh_token) {
+			await this.secretStorage.set(STUDENT_AUTH_REFRESH_TOKEN_KEY, authContext.user.refresh_token);
 		}
 
-		if (authContext.studentId) {
-			await this.secretStorage.set(STUDENT_AUTH_STUDENT_ID_KEY, authContext.studentId);
+		if (authContext.user.user_id) {
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_ID_KEY, authContext.user.user_id);
+		}
+
+		if (authContext.user.name) {
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, authContext.user.name);
+		}
+
+		if (authContext.user.email) {
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, authContext.user.email);
 		}
 
 		// Set token in API client
-		this.apiClient.setAuthToken(authContext.authToken);
+		this.apiClient.setAuthToken(authContext.access_token);
 	}
 
 	/**
@@ -264,12 +417,46 @@ export class StudentAuthService extends Disposable implements IStudentAuthServic
 		this._accessToken = undefined;
 		this._refreshToken = undefined;
 		this._studentId = undefined;
+		this._studentName = undefined;
+		this._studentEmail = undefined;
 
 		await this.secretStorage.delete(STUDENT_AUTH_TOKEN_KEY);
 		await this.secretStorage.delete(STUDENT_AUTH_REFRESH_TOKEN_KEY);
 		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_ID_KEY);
+		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_NAME_KEY);
+		await this.secretStorage.delete(STUDENT_AUTH_STUDENT_EMAIL_KEY);
 
 		this.apiClient.removeAuthToken();
+	}
+
+	private async hydrateIdentityFromToken(): Promise<void> {
+		if (!this._accessToken) {
+			return;
+		}
+
+		const payload = decodeJWT(this._accessToken) as Record<string, unknown>;
+		const tokenName = this.pickString(payload, ['name', 'full_name', 'preferred_username']);
+		const tokenEmail = this.pickString(payload, ['email', 'upn']);
+
+		if (!this._studentName && tokenName) {
+			this._studentName = tokenName;
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_NAME_KEY, tokenName);
+		}
+
+		if (!this._studentEmail && tokenEmail) {
+			this._studentEmail = tokenEmail;
+			await this.secretStorage.set(STUDENT_AUTH_STUDENT_EMAIL_KEY, tokenEmail);
+		}
+	}
+
+	private pickString(payload: Record<string, unknown>, keys: string[]): string | undefined {
+		for (const key of keys) {
+			const value = payload[key];
+			if (typeof value === 'string' && value.trim().length > 0) {
+				return value;
+			}
+		}
+		return undefined;
 	}
 
 	/**

@@ -74,6 +74,7 @@ import { IMarkdownString, MarkdownString } from '../../../../base/common/htmlCon
 import { ExtensionGalleryResourceType, getExtensionGalleryManifestResourceUri, IExtensionGalleryManifestService } from '../../../../platform/extensionManagement/common/extensionGalleryManifest.js';
 import { fromNow } from '../../../../base/common/date.js';
 import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
+import { IStudentPolicyService } from '../../studentPolicy/common/studentPolicy.js';
 
 interface IExtensionStateProvider<T> {
 	(extension: Extension): T;
@@ -1037,6 +1038,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IAllowedExtensionsService private readonly allowedExtensionsService: IAllowedExtensionsService,
+		@IStudentPolicyService private readonly studentPolicyService: IStudentPolicyService,
 	) {
 		super();
 
@@ -2398,6 +2400,10 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 			return new MarkdownString().appendText(nls.localize('not an extension', "The provided object is not an extension."));
 		}
 
+		if (this.studentPolicyService.isStudentModeEnabled() && !this.studentPolicyService.isExtensionAllowed(extension.identifier.id)) {
+			return new MarkdownString().appendText(nls.localize('blockedByStudentPolicy', "This extension is blocked by Student Mode policy."));
+		}
+
 		if (extension.isMalicious) {
 			return new MarkdownString().appendText(nls.localize('malicious', "This extension is reported to be problematic."));
 		}
@@ -2440,6 +2446,17 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
 		let installable: URI | IGalleryExtension | IResourceExtension | undefined;
 		let extension: IExtension | undefined;
 		let servers: IExtensionManagementServer[] | undefined;
+
+		if (this.studentPolicyService.isStudentModeEnabled()) {
+			if (arg instanceof URI) {
+				throw new Error(nls.localize('vsixBlockedByStudentPolicy', "Installing VSIX extensions is blocked by Student Mode policy."));
+			}
+
+			const extensionId = isString(arg) ? arg : arg.identifier.id;
+			if (!this.studentPolicyService.isExtensionAllowed(extensionId)) {
+				throw new Error(nls.localize('installBlockedByStudentPolicy', "Extension '{0}' is blocked by Student Mode policy.", extensionId));
+			}
+		}
 
 		if (arg instanceof URI) {
 			installable = arg;

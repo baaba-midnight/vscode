@@ -63,11 +63,26 @@ export class CourseDetailEditor extends EditorPane {
 		// Listen for auth state changes
 		this._register(this.authService.onDidAuthStateChange(state => {
 			console.log('[CourseDetailEditor] Auth state changed:', state);
+			const currentInput = this.input;
 			if (state === AuthState.Authenticated) {
-				// Reload editor when user logs in
-				const currentInput = this.input;
+				// Re-open the current editor input to force a full re-create and render
 				if (currentInput) {
-					void this.setInput(currentInput, {}, {}, CancellationToken.None);
+					try {
+						this.editorService.openEditor(currentInput);
+					} catch (e) {
+						console.error('[CourseDetailEditor] openEditor on auth change failed:', e);
+					}
+
+					// Delayed retry to cover race conditions where data may not yet be available
+					setTimeout(() => {
+						if (this.input === currentInput) {
+							try {
+								this.editorService.openEditor(currentInput);
+							} catch (e) {
+								console.error('[CourseDetailEditor] delayed openEditor retry failed:', e);
+							}
+						}
+					}, 300);
 				}
 			} else if (state === AuthState.Unauthenticated) {
 				// Show login prompt when user logs out

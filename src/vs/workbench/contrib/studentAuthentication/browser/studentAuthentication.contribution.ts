@@ -7,7 +7,7 @@ import { localize2 } from '../../../../nls.js';
 import { runWhenGlobalIdle } from '../../../../base/common/async.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
-import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
+import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { IStudentAuthService, AuthState } from '../common/studentAuth.js';
 import { showStudentLoginOverlay } from './studentLoginOverlay.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
@@ -132,50 +132,6 @@ MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
 		title: localize2('studentSignOut', 'Student: Sign Out'),
 		icon: Codicon.signOut
 	}
-});
-
-// Sign In button in title bar (when unauthenticated)
-MenuRegistry.appendMenuItem(MenuId.TitleBar, {
-	command: {
-		id: STUDENT_SIGN_IN_COMMAND_ID,
-		title: localize2('studentSignInTitleBar', 'Sign In'),
-		icon: Codicon.signIn
-	},
-	group: 'navigation',
-	order: 1,
-	when: ContextKeyExpr.not('studentAuthenticated')
-});
-
-// Log Out button in title bar (when authenticated)
-MenuRegistry.appendMenuItem(MenuId.TitleBar, {
-	command: {
-		id: STUDENT_SIGN_OUT_COMMAND_ID,
-		title: localize2('studentSignOutTitleBar', 'Sign Out'),
-		icon: Codicon.signOut
-	},
-	group: 'navigation',
-	order: 2,
-	when: ContextKeyExpr.has('studentAuthenticated')
-});
-
-// Sign In in Command Center (when unauthenticated)
-MenuRegistry.appendMenuItem(MenuId.CommandCenter, {
-	command: {
-		id: STUDENT_SIGN_IN_COMMAND_ID,
-		title: localize2('studentSignInTitleBar', 'Sign In')
-	},
-	order: 1,
-	when: ContextKeyExpr.not('studentAuthenticated')
-});
-
-// Log Out in Command Center (when authenticated)
-MenuRegistry.appendMenuItem(MenuId.CommandCenter, {
-	command: {
-		id: STUDENT_SIGN_OUT_COMMAND_ID,
-		title: localize2('studentSignOutTitleBar', 'Sign Out')
-	},
-	order: 2,
-	when: ContextKeyExpr.has('studentAuthenticated')
 });
 
 console.log('[StudentAuth] Authentication contribution registered successfully');
