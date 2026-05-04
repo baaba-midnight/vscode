@@ -11,6 +11,8 @@ This is a modified version of [VS Code OSS](https://github.com/microsoft/vscode)
 Before you can build and run the Student IDE, make sure you have the following installed.
 
 > ⚠️ **Clone into a path with NO spaces.** Native module compilation will fail otherwise.
+>
+> And switch to the **capstone/1.106.3** branch
 
 ### Required Tools
 
