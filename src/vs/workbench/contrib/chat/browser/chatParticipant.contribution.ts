@@ -15,6 +15,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { ExtensionIdentifier, IExtensionManifest } from '../../../../platform/extensions/common/extensions.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+import product from '../../../../platform/product/common/product.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ViewPaneContainer } from '../../../browser/parts/views/viewPaneContainer.js';
@@ -52,20 +53,24 @@ const chatViewDescriptor: IViewDescriptor = {
 	name: localize2('chat.viewContainer.label', "Chat"),
 	canToggleVisibility: false,
 	canMoveView: true,
-	openCommandActionDescriptor: {
-		id: CHAT_SIDEBAR_PANEL_ID,
-		title: chatViewContainer.title,
-		mnemonicTitle: localize({ key: 'miToggleChat', comment: ['&& denotes a mnemonic'] }, "&&Chat"),
-		keybindings: {
-			primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
-			mac: {
-				primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI
-			}
-		},
-		order: 1
-	},
+	...((product as { studentMode?: boolean }).studentMode ? {} : {
+		openCommandActionDescriptor: {
+			id: CHAT_SIDEBAR_PANEL_ID,
+			title: chatViewContainer.title,
+			mnemonicTitle: localize({ key: 'miToggleChat', comment: ['&& denotes a mnemonic'] }, "&&Chat"),
+			keybindings: {
+				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
+				mac: {
+					primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI
+				}
+			},
+			order: 1
+		}
+	}),
 	ctorDescriptor: new SyncDescriptor(ChatViewPane, [{ location: ChatAgentLocation.Chat }]),
-	when: ContextKeyExpr.or(
+	when: ContextKeyExpr.and(
+		ContextKeyExpr.equals('studentMode', false),
+		ContextKeyExpr.has('config.chat.disableAIFeatures').negate(),
 		ContextKeyExpr.or(
 			ChatContextKeys.Setup.hidden,
 			ChatContextKeys.Setup.disabled

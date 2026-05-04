@@ -13,6 +13,7 @@ import { SyncDescriptor } from '../../../../../../platform/instantiation/common/
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../../../platform/product/common/productService.js';
+import product from '../../../../../../platform/product/common/product.js';
 import { Registry } from '../../../../../../platform/registry/common/platform.js';
 import { IStorageService } from '../../../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../../../platform/telemetry/common/telemetry.js';
@@ -38,6 +39,11 @@ export class ChatSessionsView extends Disposable implements IWorkbenchContributi
 		this.registerViewContainer();
 	}
 	private registerViewContainer(): void {
+		const isStudentMode = (product as { studentMode?: boolean }).studentMode === true;
+		if (isStudentMode) {
+			return;
+		}
+
 		Registry.as<IViewContainersRegistry>(Extensions.ViewContainersRegistry).registerViewContainer(
 			{
 				id: AGENT_SESSIONS_VIEWLET_ID,
@@ -84,6 +90,11 @@ export class ChatSessionsViewContrib extends Disposable implements IWorkbenchCon
 	}
 
 	private async updateViewRegistration(): Promise<void> {
+		const isStudentMode = (product as { studentMode?: boolean }).studentMode === true;
+		if (isStudentMode) {
+			return;
+		}
+
 		// prepare all chat session providers
 		const contributions = this.chatSessionsService.getAllChatSessionContributions();
 		await Promise.all(contributions.map(contrib => this.chatSessionsService.hasChatSessionItemProvider(contrib.type)));

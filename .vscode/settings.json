@@ -214,5 +214,11 @@
 	],
 	"azureMcp.serverMode": "all",
 	"azureMcp.readOnly": true,
-	"chat.tools.terminal.outputLocation": "none"
+	"chat.tools.terminal.outputLocation": "chat",
+	"postman.settings.dotenv-detection-notification-visibility": false,
+	"cSpell.words": [
+		"contextview",
+		"themables",
+		"vscjava"
+	]
 }
