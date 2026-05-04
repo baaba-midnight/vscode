@@ -11,7 +11,6 @@ import './contrib/bracketMatching/browser/bracketMatching.js';
 import './contrib/caretOperations/browser/caretOperations.js';
 import './contrib/caretOperations/browser/transpose.js';
 import './contrib/clipboard/browser/clipboard.js';
-import './contrib/disableCopyPaste/browser/disableCopyPaste.js';
 import './contrib/codeAction/browser/codeActionContributions.js';
 import './contrib/codelens/browser/codelensController.js';
 import './contrib/colorPicker/browser/colorPickerContribution.js';

@@ -169,8 +169,7 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 		}
 
 		// If enabled in settings, add "Ask in Chat" option after a separator (if needed).
-		const isStudentMode = (this.productService as unknown as { studentMode?: boolean }).studentMode === true;
-		if (this.configuration.showAskInChat && !isStudentMode) {
+		if (this.configuration.showAskInChat) {
 			const defaultAgent = this.chatAgentService.getDefaultAgent(ChatAgentLocation.Chat);
 			if (defaultAgent) {
 				if (picksSoFar.length || additionalPicks.length) {

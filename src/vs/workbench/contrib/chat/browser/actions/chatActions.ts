@@ -178,8 +178,6 @@ abstract class OpenChatGlobalAction extends Action2 {
 			f1: true,
 			category: CHAT_CATEGORY,
 			precondition: ContextKeyExpr.and(
-				ContextKeyExpr.equals('studentMode', false),
-				ContextKeyExpr.has('config.chat.disableAIFeatures').negate(),
 				ChatContextKeys.Setup.hidden.negate(),
 				ChatContextKeys.Setup.disabled.negate()
 			)
@@ -461,55 +459,49 @@ export function registerChatActions() {
 		constructor() { super(ChatMode.Edit); }
 	});
 
-	if (!(product as { studentMode?: boolean }).studentMode) {
-		registerAction2(class ToggleChatAction extends Action2 {
-			constructor() {
-				super({
-					id: TOGGLE_CHAT_ACTION_ID,
-					title: localize2('toggleChat', "Toggle Chat"),
-					category: CHAT_CATEGORY,
-					precondition: ContextKeyExpr.and(
-						ContextKeyExpr.equals('studentMode', false),
-						ContextKeyExpr.has('config.chat.disableAIFeatures').negate()
-					)
-				});
+	registerAction2(class ToggleChatAction extends Action2 {
+		constructor() {
+			super({
+				id: TOGGLE_CHAT_ACTION_ID,
+				title: localize2('toggleChat', "Toggle Chat"),
+				category: CHAT_CATEGORY
+			});
+		}
+
+		async run(accessor: ServicesAccessor) {
+			const layoutService = accessor.get(IWorkbenchLayoutService);
+			const viewsService = accessor.get(IViewsService);
+			const viewDescriptorService = accessor.get(IViewDescriptorService);
+
+			const chatLocation = viewDescriptorService.getViewLocationById(ChatViewId);
+
+			if (viewsService.isViewVisible(ChatViewId)) {
+				this.updatePartVisibility(layoutService, chatLocation, false);
+			} else {
+				this.updatePartVisibility(layoutService, chatLocation, true);
+				(await showChatView(viewsService, layoutService))?.focusInput();
+			}
+		}
+
+		private updatePartVisibility(layoutService: IWorkbenchLayoutService, location: ViewContainerLocation | null, visible: boolean): void {
+			let part: Parts.PANEL_PART | Parts.SIDEBAR_PART | Parts.AUXILIARYBAR_PART | undefined;
+			switch (location) {
+				case ViewContainerLocation.Panel:
+					part = Parts.PANEL_PART;
+					break;
+				case ViewContainerLocation.Sidebar:
+					part = Parts.SIDEBAR_PART;
+					break;
+				case ViewContainerLocation.AuxiliaryBar:
+					part = Parts.AUXILIARYBAR_PART;
+					break;
 			}
 
-			async run(accessor: ServicesAccessor) {
-				const layoutService = accessor.get(IWorkbenchLayoutService);
-				const viewsService = accessor.get(IViewsService);
-				const viewDescriptorService = accessor.get(IViewDescriptorService);
-
-				const chatLocation = viewDescriptorService.getViewLocationById(ChatViewId);
-
-				if (viewsService.isViewVisible(ChatViewId)) {
-					this.updatePartVisibility(layoutService, chatLocation, false);
-				} else {
-					this.updatePartVisibility(layoutService, chatLocation, true);
-					(await showChatView(viewsService, layoutService))?.focusInput();
-				}
+			if (part) {
+				layoutService.setPartHidden(!visible, part);
 			}
-
-			private updatePartVisibility(layoutService: IWorkbenchLayoutService, location: ViewContainerLocation | null, visible: boolean): void {
-				let part: Parts.PANEL_PART | Parts.SIDEBAR_PART | Parts.AUXILIARYBAR_PART | undefined;
-				switch (location) {
-					case ViewContainerLocation.Panel:
-						part = Parts.PANEL_PART;
-						break;
-					case ViewContainerLocation.Sidebar:
-						part = Parts.SIDEBAR_PART;
-						break;
-					case ViewContainerLocation.AuxiliaryBar:
-						part = Parts.AUXILIARYBAR_PART;
-						break;
-				}
-
-				if (part) {
-					layoutService.setPartHidden(!visible, part);
-				}
-			}
-		});
-	}
+		}
+	});
 
 	registerAction2(class ChatHistoryAction extends Action2 {
 		constructor() {

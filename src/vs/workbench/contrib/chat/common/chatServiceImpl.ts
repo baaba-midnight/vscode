@@ -27,7 +27,6 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IMcpService } from '../../mcp/common/mcpTypes.js';
-import { IStudentPolicyService } from '../../studentPolicy/common/studentPolicy.js';
 import { IChatAgentCommand, IChatAgentData, IChatAgentHistoryEntry, IChatAgentRequest, IChatAgentResult, IChatAgentService } from './chatAgents.js';
 import { IChatEditingSession } from './chatEditingService.js';
 import { ChatModel, ChatRequestModel, ChatRequestRemovalReason, IChatModel, IChatRequestModel, IChatRequestVariableData, IChatResponseModel, IExportableChatData, ISerializableChatData, ISerializableChatDataIn, ISerializableChatsData, normalizeSerializableChatData, toChatHistoryContent, updateRanges } from './chatModel.js';
@@ -182,7 +181,6 @@ export class ChatService extends Disposable implements IChatService {
 		@IChatTransferService private readonly chatTransferService: IChatTransferService,
 		@IChatSessionsService private readonly chatSessionService: IChatSessionsService,
 		@IMcpService private readonly mcpService: IMcpService,
-		@IStudentPolicyService private readonly studentPolicyService: IStudentPolicyService,
 	) {
 		super();
 
@@ -232,10 +230,6 @@ export class ChatService extends Disposable implements IChatService {
 	}
 
 	isEnabled(location: ChatAgentLocation): boolean {
-		if (this.studentPolicyService.isStudentModeEnabled()) {
-			return false;
-		}
-
 		return this.chatAgentService.getContributedDefaultAgent(location) !== undefined;
 	}
 
@@ -687,11 +681,6 @@ export class ChatService extends Disposable implements IChatService {
 	}
 
 	async resendRequest(request: IChatRequestModel, options?: IChatSendRequestOptions): Promise<void> {
-		if (this.studentPolicyService.isStudentModeEnabled()) {
-			this.trace('resendRequest', 'Blocked in student mode');
-			return;
-		}
-
 		const model = this._sessionModels.get(request.session.sessionResource);
 		if (!model && model !== request.session) {
 			throw new Error(`Unknown session: ${request.session.sessionResource}`);
@@ -720,11 +709,6 @@ export class ChatService extends Disposable implements IChatService {
 
 	async sendRequest(sessionResource: URI, request: string, options?: IChatSendRequestOptions): Promise<IChatSendRequestData | undefined> {
 		this.trace('sendRequest', `sessionResource: ${sessionResource.toString()}, message: ${request.substring(0, 20)}${request.length > 20 ? '[...]' : ''}}`);
-
-		if (this.studentPolicyService.isStudentModeEnabled()) {
-			this.trace('sendRequest', 'Blocked in student mode');
-			return;
-		}
 
 
 		if (!request.trim() && !options?.slashCommand && !options?.agentId && !options?.agentIdSilent) {

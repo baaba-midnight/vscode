@@ -1,27 +1,6 @@
 {
 	"nameShort": "Code - OSS",
 	"nameLong": "Code - OSS",
-	"studentMode": true,
-	"student": {
-		"allowedExtensions": [
-			"ms-python.python",
-			"ms-python.vscode-pylance",
-			"redhat.java",
-			"vscjava.vscode-java-pack",
-			"vscjava.vscode-java-debug",
-			"ms-vscode.cpptools",
-			"golang.go",
-			"rust-lang.rust-analyzer",
-			"ms-python.black-formatter",
-			"esbenp.prettier-vscode",
-			"dbaeumer.vscode-eslint",
-			"pkief.material-icon-theme",
-			"zhuangtongfa.material-theme",
-			"github.github-vscode-theme",
-			"ms-vscode.live-server",
-			"formulahendry.code-runner"
-		]
-	},
 	"applicationName": "code-oss",
 	"dataFolderName": ".vscode-oss",
 	"win32MutexName": "vscodeoss",

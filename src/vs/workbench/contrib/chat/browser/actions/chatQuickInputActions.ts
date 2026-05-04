@@ -8,7 +8,6 @@ import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Selection } from '../../../../../editor/common/core/selection.js';
 import { localize, localize2 } from '../../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
-import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { CHAT_CATEGORY } from './chatActions.js';
@@ -71,7 +70,7 @@ class QuickChatGlobalAction extends Action2 {
 		super({
 			id: ASK_QUICK_QUESTION_ACTION_ID,
 			title: localize2('quickChat', 'Open Quick Chat'),
-			precondition: ContextKeyExpr.and(ChatContextKeys.enabled, ContextKeyExpr.equals('studentMode', false)),
+			precondition: ChatContextKeys.enabled,
 			icon: Codicon.chatSparkle,
 			f1: false,
 			category: CHAT_CATEGORY,
@@ -135,7 +134,7 @@ class AskQuickChatAction extends Action2 {
 			id: `workbench.action.openQuickChat`,
 			category: CHAT_CATEGORY,
 			title: localize2('interactiveSession.open', "Open Quick Chat"),
-			precondition: ContextKeyExpr.and(ChatContextKeys.enabled, ContextKeyExpr.equals('studentMode', false)),
+			precondition: ChatContextKeys.enabled,
 			f1: true
 		});
 	}
