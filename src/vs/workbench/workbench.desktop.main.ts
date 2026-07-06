@@ -191,6 +191,9 @@ import './contrib/emergencyAlert/electron-browser/emergencyAlert.contribution.js
 // Policy Export
 import './contrib/policyExport/electron-browser/policyExport.contribution.js';
 
+// Student Integration - CopyPaste Feature
+import './contrib/pasteRestriction/browser/pasteRestriction.contribution.js';
+
 // Student Integration - Authentication
 import './contrib/studentAuthentication/browser/studentAuthentication.contribution.js';
 

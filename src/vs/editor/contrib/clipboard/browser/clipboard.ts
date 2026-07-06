@@ -58,24 +58,28 @@ export const CutAction = supportsCut ? registerCommand(new MultiCommand({
 		group: '2_ccp',
 		title: nls.localize({ key: 'miCut', comment: ['&& denotes a mnemonic'] }, "Cu&&t"),
 		order: 1
-	}, {
+	},
+	{
 		menuId: MenuId.EditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.cutLabel', "Cut"),
 		when: EditorContextKeys.writable,
 		order: 1,
-	}, {
+	},
+	{
 		menuId: MenuId.CommandPalette,
 		group: '',
 		title: nls.localize('actions.clipboard.cutLabel', "Cut"),
 		order: 1
-	}, {
+	},
+	{
 		menuId: MenuId.SimpleEditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.cutLabel', "Cut"),
 		when: EditorContextKeys.writable,
 		order: 1,
-	}]
+	}
+	]
 })) : undefined;
 
 export const CopyAction = supportsCopy ? registerCommand(new MultiCommand({
@@ -95,22 +99,26 @@ export const CopyAction = supportsCopy ? registerCommand(new MultiCommand({
 		group: '2_ccp',
 		title: nls.localize({ key: 'miCopy', comment: ['&& denotes a mnemonic'] }, "&&Copy"),
 		order: 2
-	}, {
+	},
+	{
 		menuId: MenuId.EditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.copyLabel', "Copy"),
 		order: 2,
-	}, {
+	},
+	{
 		menuId: MenuId.CommandPalette,
 		group: '',
 		title: nls.localize('actions.clipboard.copyLabel', "Copy"),
 		order: 1
-	}, {
+	},
+	{
 		menuId: MenuId.SimpleEditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.copyLabel', "Copy"),
 		order: 2,
-	}]
+	}
+	]
 })) : undefined;
 
 MenuRegistry.appendMenuItem(MenuId.MenubarEditMenu, { submenu: MenuId.MenubarCopy, title: nls.localize2('copy as', "Copy As"), group: '2_ccp', order: 3 });
@@ -136,24 +144,28 @@ export const PasteAction = supportsPaste ? registerCommand(new MultiCommand({
 		group: '2_ccp',
 		title: nls.localize({ key: 'miPaste', comment: ['&& denotes a mnemonic'] }, "&&Paste"),
 		order: 4
-	}, {
+	},
+	{
 		menuId: MenuId.EditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.pasteLabel', "Paste"),
 		when: EditorContextKeys.writable,
 		order: 4,
-	}, {
+	},
+	{
 		menuId: MenuId.CommandPalette,
 		group: '',
 		title: nls.localize('actions.clipboard.pasteLabel', "Paste"),
 		order: 1
-	}, {
+	},
+	{
 		menuId: MenuId.SimpleEditorContext,
 		group: CLIPBOARD_CONTEXT_MENU_GROUP,
 		title: nls.localize('actions.clipboard.pasteLabel', "Paste"),
 		when: EditorContextKeys.writable,
 		order: 4,
-	}]
+	}
+	]
 })) : undefined;
 
 class ExecCommandCopyWithSyntaxHighlightingAction extends EditorAction {
