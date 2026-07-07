@@ -307,3 +307,58 @@
 	border-left: 3px dashed var(--vscode-focusBorder);
 	opacity: 0.8;
 }
+
+/* Attachment chips row - sits above the input row, hidden entirely when empty */
+.chat-attachments-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 6px;
+}
+
+.chat-attachments-row:empty {
+	display: none;
+	margin-bottom: 0;
+}
+
+.chat-attachment-chip {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 6px 3px 8px;
+	border-radius: 10px;
+	border: 1px solid var(--vscode-panel-border);
+	background: var(--vscode-textCodeBlock-background);
+	font-size: 11px;
+	max-width: 200px;
+}
+
+.chat-attachment-icon {
+	font-size: 12px;
+	opacity: 0.8;
+	flex-shrink: 0;
+}
+
+.chat-attachment-label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-foreground);
+}
+
+.char-attachment-remove {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	padding: 0;
+	margin-left: 2px;
+	cursor: pointer;
+	color: var(--vscode-descriptionForeground);
+	flex-shrink: 0;
+}
+
+.chat-attchment-remove:hover {
+	color: var(--vscode-foreground);
+}

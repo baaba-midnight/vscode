@@ -90,3 +90,21 @@ export interface ChatMessage {
 	message_text: string;
 	created_at: string; // ISO timestamp
 }
+
+// type definition for feature "Send to chat"
+export type PendingAttachmentKind = 'selection' | 'file';
+
+// An attachment represents a chunk of editor content (a selection or a whole file)
+// that a student has attached to that chat input but not yet sent. It lives only in
+// the panel's in-memory state, once the message issent, its content gets folded
+// into the plain `message_text` string, so nothing downstream needs to know attachments
+// exists at all
+export interface PendingAttachment {
+	id: string;
+	kind: PendingAttachmentKind;
+	fileName: string;
+	range?: { startLine: number; endLine: number };
+	content: string;
+}
+
+export type PendingAttachmentInput = Omit<PendingAttachment, 'id'>;

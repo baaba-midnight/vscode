@@ -193,6 +193,7 @@ import './contrib/policyExport/electron-browser/policyExport.contribution.js';
 
 // Student Integration - CopyPaste Feature
 import './contrib/pasteRestriction/browser/pasteRestriction.contribution.js';
+import './contrib/studentChat/browser/studentChat.attachments.contribution.js';
 
 // Student Integration - Authentication
 import './contrib/studentAuthentication/browser/studentAuthentication.contribution.js';

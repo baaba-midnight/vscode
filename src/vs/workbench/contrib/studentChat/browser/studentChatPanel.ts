@@ -28,6 +28,8 @@ import { ISecretStorageService } from '../../../../platform/secrets/common/secre
 import { hasStoredStudentAuth } from '../../studentAuthentication/common/studentAuth.js';
 import { localize } from '../../../../nls.js';
 import { toDisposable } from '../../../../base/common/lifecycle.js';
+import { StudentChatAttachments } from './studentChat.attachments.js';
+import { PendingAttachmentInput } from '../common/types.js';
 
 export class StudentChatPanel extends ViewPane {
 	private _chatContainer!: HTMLElement;
@@ -40,6 +42,8 @@ export class StudentChatPanel extends ViewPane {
 	private _loadingElement: HTMLElement | undefined;
 	private _assignmentHeader!: HTMLElement;
 	private _authPollInterval: number | undefined;
+	private _attachmentsRow!: HTMLElement;
+	private _attachments!: StudentChatAttachments;
 
 	private readonly _onMessageSent = this._register(new Emitter<string>());
 	readonly onMessageSent: Event<string> = this._onMessageSent.event;
@@ -100,6 +104,11 @@ export class StudentChatPanel extends ViewPane {
 
 		// Messages container with scroll
 		this._messagesContainer = append(this._chatContainer, $('.chat-messages'));
+
+		// Attachments row sits above the textarea, shows staged code/file attachments
+		// as removable chips. Empty (and invisible via CSS :empty) when nothing's attached
+		this._attachmentsRow = append(this._chatContainer, $('.chat-attachments-row'));
+		this._attachments = this._register(new StudentChatAttachments(this._attachmentsRow));
 
 		// Input container
 		this._inputContainer = append(this._chatContainer, $('.chat-input-container'));
@@ -254,10 +263,16 @@ export class StudentChatPanel extends ViewPane {
 	}
 
 	private async _sendMessage(): Promise<void> {
-		const message = this._messageInput.value.trim();
-		if (!message) {
+		const typedText = this._messageInput.value.trim();
+
+		if (!typedText && !this._attachments.hasAttachments) {
 			return;
 		}
+
+		// consumeAsMessageText() clears staged attachments as a side effect
+		// call it exactly once, right before building the outgoing message.
+		const attachmentBlocks = this._attachments.consumeAsMessageText();
+		const message = [attachmentBlocks, typedText].filter(Boolean).join('\n\n');
 
 		// clear input and disable send button
 		this._messageInput.value = '';
@@ -481,12 +496,16 @@ export class StudentChatPanel extends ViewPane {
 		return StudentChatPanel._timeFormatter(timestamp);
 	}
 
-
 	override focus(): void {
 		super.focus();
 		if (this._messageInput) {
 			this._messageInput.focus();
 		}
+	}
+
+	public addAttachment(input: PendingAttachmentInput): void {
+		this._attachments.add(input);
+		this.focus();
 	}
 }
 
